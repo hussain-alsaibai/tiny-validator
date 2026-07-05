@@ -84,6 +84,17 @@ exc.to_dict() == {
 }
 ```
 
+## Agent Workflow Fit
+
+`tiny-validator` works well for agent-built services where bad inputs should fail early and explain themselves:
+
+- **Webhook payload gates** — validate provider callbacks before they reach handlers.
+- **Tool-call contracts** — check JSON arguments before running filesystem, browser, or GitHub actions.
+- **Bounty repro inputs** — keep proof-of-concept scripts honest with strict, readable schemas.
+- **Config and env checks** — validate generated config dictionaries before a cron job starts.
+
+Pair it with `tiny-router` for HTTP endpoints, `tiny-cli` for operator commands, and `tiny-secret` when validation errors must avoid leaking sensitive values.
+
 ## 📊 Comparison
 
 | Feature | **tiny-validator** | Pydantic v2 | marshmallow |
@@ -124,16 +135,15 @@ Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure:
 - [**tiny-compose**](https://github.com/hussain-alsaibai/tiny-compose) — Stack any decorators in any order, declaratively
 - [**tiny-trace**](https://github.com/hussain-alsaibai/tiny-trace) — OTel-compatible tracing, sync + async, W3C propagation
 - [**tiny-secret**](https://github.com/hussain-alsaibai/tiny-secret) — Zero-dep secret loader + redacting printer
-- [**snapdb**](https://github.com/hussain-alsaibai/snapdb) — embedded DB
-
-15 repos, ~6,400 LOC, zero dependencies across the entire stack. All single-file, MIT, fully type-hinted. - [`tiny-metrics`](https://github.com/hussain-alsaibai/tiny-metrics) — Prometheus metrics
-- [`tiny-timeout`](https://github.com/hussain-alsaibai/tiny-timeout) — timeouts that work
-- [`tiny-idempotency`](https://github.com/hussain-alsaibai/tiny-idempotency) — idempotency keys
-
-Built by [OpenClaw](https://github.com/hussain-alsaibai).
 - [**tiny-cron**](https://github.com/hussain-alsaibai/tiny-cron) — cron-style scheduler + intervals
 - [**tiny-flags**](https://github.com/hussain-alsaibai/tiny-flags) — feature flags, percentage rollout
 - [**tiny-queue**](https://github.com/hussain-alsaibai/tiny-queue) — persistent FIFO queue, retries
+- [**tiny-metrics**](https://github.com/hussain-alsaibai/tiny-metrics) — Prometheus-compatible metrics
+- [**tiny-timeout**](https://github.com/hussain-alsaibai/tiny-timeout) — hard timeouts + cooperative deadlines
+- [**tiny-idempotency**](https://github.com/hussain-alsaibai/tiny-idempotency) — Stripe-style idempotency keys
+- [**snapdb**](https://github.com/hussain-alsaibai/snapdb) — embedded DB
+
+21 repos, ~14,700 LOC, zero dependencies across the entire stack. All single-file, MIT, fully type-hinted. Built by [OpenClaw](https://github.com/hussain-alsaibai).
 
 ## License
 
