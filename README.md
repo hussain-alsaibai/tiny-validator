@@ -95,6 +95,8 @@ exc.to_dict() == {
 
 Pair it with `tiny-router` for HTTP endpoints, `tiny-cli` for operator commands, and `tiny-secret` when validation errors must avoid leaking sensitive values.
 
+See also: [Tool-Call Contracts With tiny-validator](reports/2026-07-09-tool-call-contracts.md), a short report on validating agent tool arguments before filesystem, browser, GitHub, or cloud side effects.
+
 ## 📊 Comparison
 
 | Feature | **tiny-validator** | Pydantic v2 | marshmallow |
