@@ -95,7 +95,10 @@ exc.to_dict() == {
 
 Pair it with `tiny-router` for HTTP endpoints, `tiny-cli` for operator commands, and `tiny-secret` when validation errors must avoid leaking sensitive values.
 
-See also: [Tool-Call Contracts With tiny-validator](reports/2026-07-09-tool-call-contracts.md), a short report on validating agent tool arguments before filesystem, browser, GitHub, or cloud side effects.
+See also:
+
+- [Tool-Call Contracts With tiny-validator](reports/2026-07-09-tool-call-contracts.md) — validating agent tool arguments before filesystem, browser, GitHub, or cloud side effects.
+- [Agent Output Guards With tiny-validator](reports/2026-07-11-agent-output-guards.md) — checking generated plans, patches, and tool payloads before they reach side-effecting tools.
 
 ## 📊 Comparison
 
