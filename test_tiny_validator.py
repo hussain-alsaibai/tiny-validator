@@ -21,6 +21,7 @@ from tiny_validator import (
     Uuid,
     ValidationError,
     fields,
+    from_json_schema,
     http_error_response,
     validate,
 )
@@ -231,6 +232,69 @@ class TestDecorator(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             handler(body={"name": "a"}, query={})
+
+
+class TestJsonSchemaBridge(unittest.TestCase):
+    def test_from_json_schema_validates_tool_arguments(self) -> None:
+        schema = from_json_schema(
+            {
+                "type": "object",
+                "required": ["query", "limit", "source"],
+                "properties": {
+                    "query": {"type": "string", "minLength": 3, "maxLength": 80},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "source": {"type": "string", "enum": ["github", "docs", "web"]},
+                    "include_archived": {"type": "boolean", "default": False},
+                },
+                "additionalProperties": False,
+            }
+        )
+
+        result = schema({"query": "tiny router", "limit": 5, "source": "github"})
+        self.assertEqual(result["include_archived"], False)
+        self.assertEqual(schema.validate({"query": "tiny router", "limit": 5, "source": "github"}), [])
+
+        errors = schema.validate({"query": "x", "limit": 11, "source": "email", "extra": True})
+        messages = [error["message"] for error in errors]
+        self.assertIn("unexpected field", messages)
+        self.assertTrue(any("at least 3" in message for message in messages))
+        self.assertTrue(any("<= 10" in message for message in messages))
+        self.assertTrue(any("one of" in message for message in messages))
+
+    def test_from_json_schema_supports_nested_arrays_and_formats(self) -> None:
+        schema = from_json_schema(
+            {
+                "type": "object",
+                "required": ["owner", "targets"],
+                "properties": {
+                    "owner": {"type": "string", "format": "email"},
+                    "targets": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "required": ["url"],
+                            "properties": {"url": {"type": "string", "format": "uri"}},
+                        },
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(
+            schema.validate({"owner": "ops@example.com", "targets": [{"url": "https://example.com"}]}),
+            [],
+        )
+        self.assertEqual(len(schema.validate({"owner": "bad", "targets": []})), 2)
+
+    def test_from_json_schema_rejects_unknown_keywords(self) -> None:
+        with self.assertRaises(ValueError):
+            from_json_schema(
+                {
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "const": "fixed"}},
+                }
+            )
 
 
 class TestFieldsNS(unittest.TestCase):

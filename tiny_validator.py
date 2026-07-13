@@ -562,12 +562,219 @@ def http_error_response(exc: ValidationError) -> dict[str, Any]:
     return exc.to_dict()
 
 
+# ---------- JSON Schema bridge (subset) ----------
+
+
+def from_json_schema(
+    schema: Mapping[str, Any],
+    *,
+    strict: bool = True,
+) -> Schema:
+    """Build a ``Schema`` from a JSON Schema subset.
+
+    Supported keywords:
+
+    - ``type``: ``object``, ``string``, ``integer``, ``number``, ``boolean``,
+      ``array``, ``null``.
+    - ``properties`` + ``required`` for objects.
+    - ``items`` for arrays.
+    - ``enum`` for fixed-value fields.
+    - ``pattern`` for string regex.
+    - ``minimum`` / ``maximum`` / ``exclusiveMinimum`` / ``exclusiveMaximum``
+      for numeric bounds.
+    - ``minLength`` / ``maxLength`` for strings.
+    - ``minItems`` / ``maxItems`` for arrays.
+    - ``format``: ``email``, ``uri``, ``uuid``, ``date``, ``date-time``.
+    - ``default`` for default values.
+
+    Anything outside this subset raises ``ValueError`` so callers get a clear
+    error instead of silent acceptance. The goal is to validate the JSON
+    Schemas used by MCP tool definitions and agent config files without
+    pulling in ``jsonschema`` or ``pydantic``.
+    """
+
+    if not isinstance(schema, MappingABC):
+        raise ValueError("json schema root must be an object")
+
+    json_type = schema.get("type", "object")
+    if json_type != "object":
+        raise ValueError(
+            "root json schema must declare type='object'; got "
+            f"{json_type!r}. Wrap nested types in properties/items."
+        )
+
+    properties = schema.get("properties", {})
+    if not isinstance(properties, MappingABC):
+        raise ValueError("'properties' must be an object")
+
+    required = set(schema.get("required", []) or [])
+    if not required.issubset(properties.keys()):
+        missing = sorted(required - properties.keys())
+        raise ValueError(f"required fields missing from properties: {missing}")
+
+    fields: dict[str, Field] = {}
+    for name, sub_schema in properties.items():
+        field = _build_field_from_json_schema(name, sub_schema)
+        if name not in required:
+            field.default = sub_schema.get("default", None)
+            field.required = False
+        fields[name] = field
+
+    return Schema(fields, strict=strict)
+
+
+def _build_field_from_json_schema(name: str, sub_schema: Any) -> Field:
+    if not isinstance(sub_schema, MappingABC):
+        raise ValueError(f"property {name!r}: schema must be an object")
+
+    allowed = {
+        "type",
+        "properties",
+        "required",
+        "items",
+        "enum",
+        "pattern",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "format",
+        "default",
+        "description",
+        "additionalProperties",
+    }
+    unsupported = set(sub_schema) - allowed
+    if unsupported:
+        raise ValueError(f"property {name!r}: unsupported keywords: {sorted(unsupported)}")
+
+    json_type = sub_schema.get("type", "string")
+    if isinstance(json_type, list):
+        # JSON Schema allows ["string", "null"]. Take the first non-null type.
+        non_null = [t for t in json_type if t != "null"]
+        if not non_null:
+            raise ValueError(f"property {name!r}: type list contains only null")
+        json_type = non_null[0]
+
+    field: Field
+    if json_type == "string":
+        field = _string_field(sub_schema)
+    elif json_type == "integer":
+        field = _integer_field(sub_schema)
+    elif json_type in ("number", "float"):
+        field = _float_field(sub_schema)
+    elif json_type == "boolean":
+        field = Boolean()
+    elif json_type == "array":
+        field = _array_field(sub_schema)
+    elif json_type == "object":
+        field = _object_field(sub_schema)
+    elif json_type == "null":
+        # No useful validator; treat as Any.
+        field = Any()
+    else:
+        raise ValueError(f"property {name!r}: unsupported type {json_type!r}")
+
+    if "enum" in sub_schema:
+        enum_values = sub_schema["enum"]
+        if not isinstance(enum_values, list):
+            raise ValueError(f"property {name!r}: 'enum' must be a list")
+        field.add_validator(lambda value, choices=enum_values: value in choices, f"value must be one of {enum_values}")
+    if "description" in sub_schema and isinstance(sub_schema["description"], str):
+        field.description = sub_schema["description"]
+    return field
+
+
+def _string_field(sub_schema: Mapping[str, Any]) -> String:
+    fmt = sub_schema.get("format")
+    kwargs = {
+        "min_length": sub_schema.get("minLength") if isinstance(sub_schema.get("minLength"), int) else None,
+        "max_length": sub_schema.get("maxLength") if isinstance(sub_schema.get("maxLength"), int) else None,
+        "pattern": sub_schema.get("pattern") if isinstance(sub_schema.get("pattern"), str) else None,
+    }
+    field: String
+    if fmt == "email":
+        field = Email(**kwargs)
+    elif fmt == "uri" or fmt == "url":
+        field = Url(**kwargs)
+    elif fmt == "uuid":
+        field = Uuid(**kwargs)
+    elif fmt == "date":
+        field = Date(**kwargs)
+    elif fmt == "date-time":
+        field = DateTime(**kwargs)
+    else:
+        field = String(**kwargs)
+    return field
+
+
+def _integer_field(sub_schema: Mapping[str, Any]) -> Integer:
+    minimum = sub_schema.get("minimum")
+    maximum = sub_schema.get("maximum")
+    field = Integer(
+        min_value=int(minimum) if isinstance(minimum, int) and not isinstance(minimum, bool) else None,
+        max_value=int(maximum) if isinstance(maximum, int) and not isinstance(maximum, bool) else None,
+    )
+    exclusive_minimum = sub_schema.get("exclusiveMinimum")
+    if isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool):
+        field.add_validator(lambda value, limit=exclusive_minimum: value > limit, f"value must be > {exclusive_minimum}")
+    exclusive_maximum = sub_schema.get("exclusiveMaximum")
+    if isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool):
+        field.add_validator(lambda value, limit=exclusive_maximum: value < limit, f"value must be < {exclusive_maximum}")
+    return field
+
+
+def _float_field(sub_schema: Mapping[str, Any]) -> Float:
+    minimum = sub_schema.get("minimum")
+    maximum = sub_schema.get("maximum")
+    field = Float(
+        min_value=float(minimum) if isinstance(minimum, (int, float)) and not isinstance(minimum, bool) else None,
+        max_value=float(maximum) if isinstance(maximum, (int, float)) and not isinstance(maximum, bool) else None,
+    )
+    exclusive_minimum = sub_schema.get("exclusiveMinimum")
+    if isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool):
+        field.add_validator(lambda value, limit=exclusive_minimum: value > limit, f"value must be > {exclusive_minimum}")
+    exclusive_maximum = sub_schema.get("exclusiveMaximum")
+    if isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool):
+        field.add_validator(lambda value, limit=exclusive_maximum: value < limit, f"value must be < {exclusive_maximum}")
+    return field
+
+
+def _array_field(sub_schema: Mapping[str, Any]) -> List:
+    items_schema = sub_schema.get("items")
+    min_items = sub_schema.get("minItems")
+    max_items = sub_schema.get("maxItems")
+    kwargs = {
+        "min_length": min_items if isinstance(min_items, int) else None,
+        "max_length": max_items if isinstance(max_items, int) else None,
+    }
+    if items_schema is None:
+        # Untyped arrays: accept any element.
+        field = List(Any(), **kwargs)
+    else:
+        item_field = _build_field_from_json_schema("items", items_schema)
+        field = List(item_field, **kwargs)
+    return field
+
+
+def _object_field(sub_schema: Mapping[str, Any]) -> Dict_:
+    nested = from_json_schema(
+        {"type": "object", **sub_schema},
+        strict=sub_schema.get("additionalProperties", True) is False,
+    )
+    return Dict_(schema=nested)
+
+
 __all__ = [
     "Schema",
     "Field",
     "ValidationError",
     "fields",
     "validate",
+    "from_json_schema",
     "http_error_response",
     "Any",
     "String",

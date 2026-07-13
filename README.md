@@ -95,10 +95,37 @@ exc.to_dict() == {
 
 Pair it with `tiny-router` for HTTP endpoints, `tiny-cli` for operator commands, and `tiny-secret` when validation errors must avoid leaking sensitive values.
 
+### JSON Schema tool contracts
+
+Use `from_json_schema()` when a tool, MCP server, or generated config already
+describes its arguments as JSON Schema:
+
+```python
+from tiny_validator import from_json_schema
+
+schema = from_json_schema({
+    "type": "object",
+    "required": ["repo", "limit"],
+    "properties": {
+        "repo": {"type": "string", "pattern": r"^[^/]+/[^/]+$"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+        "include_closed": {"type": "boolean", "default": False},
+    },
+    "additionalProperties": False,
+})
+
+args = schema({"repo": "hussain-alsaibai/tiny-validator", "limit": 5})
+```
+
+The bridge intentionally supports a practical subset and raises `ValueError`
+for unsupported keywords, so tool-call validation fails loudly instead of
+silently accepting a partial contract.
+
 See also:
 
 - [Tool-Call Contracts With tiny-validator](reports/2026-07-09-tool-call-contracts.md) — validating agent tool arguments before filesystem, browser, GitHub, or cloud side effects.
 - [Agent Output Guards With tiny-validator](reports/2026-07-11-agent-output-guards.md) — checking generated plans, patches, and tool payloads before they reach side-effecting tools.
+- [JSON Schema Tool Contracts With tiny-validator](reports/2026-07-13-json-schema-tool-contracts.md) — validating MCP-style tool arguments with a zero-dependency schema bridge.
 
 ## 📊 Comparison
 
