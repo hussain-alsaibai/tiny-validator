@@ -126,6 +126,7 @@ See also:
 - [Tool-Call Contracts With tiny-validator](reports/2026-07-09-tool-call-contracts.md) — validating agent tool arguments before filesystem, browser, GitHub, or cloud side effects.
 - [Agent Output Guards With tiny-validator](reports/2026-07-11-agent-output-guards.md) — checking generated plans, patches, and tool payloads before they reach side-effecting tools.
 - [JSON Schema Tool Contracts With tiny-validator](reports/2026-07-13-json-schema-tool-contracts.md) — validating MCP-style tool arguments with a zero-dependency schema bridge.
+- [Schema Drift Repair Loops With tiny-validator](reports/2026-07-14-schema-drift-repair-loops.md) — turning validation failures into safe, inspectable repair prompts for agent outputs and tool payloads.
 
 ## 📊 Comparison
 
