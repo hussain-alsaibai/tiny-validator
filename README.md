@@ -2,6 +2,7 @@
 
 > **Like Pydantic, but in one file. Zero dependencies.**
 
+[![version 0.2.0](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/hussain-alsaibai/tiny-validator)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](tiny_validator.py)
@@ -20,6 +21,9 @@
 - **🎁 Defaults** — built into Field
 - **🚨 Structured errors** — `ValidationError.errors` is a list of `{path, message}`
 - **🎀 Decorator** — `@validate(body=..., query=..., headers=...)`
+- **🧬 JSON Schema import** — `json_schema()` / `from_json_schema()` for MCP tool contracts
+- **📦 Batch validation** — `schema.validate_many(items)` splits valid/invalid
+- **🩹 Partial validation** — `schema.partial()` ignores unknown fields
 
 ## 🚀 Quick Start
 
@@ -37,6 +41,87 @@ try:
     clean = user_schema({"name": "Hussain", "email": "h@x.co", "role": "admin"})
 except ValidationError as exc:
     print(exc.errors)
+```
+
+## 🎀 Async Validation
+
+```python
+from tiny_validator import AsyncField, AsyncValidator, fields
+
+async def check_repo(value: str) -> str | None:
+    """Return None if valid, error string if not."""
+    exists = await github_api.repo_exists(value)
+    return None if exists else "repository not found"
+
+schema = AsyncValidator({
+    "repo": AsyncField(validator_fn=check_repo),
+    "limit": fields.Integer(default=10),
+})
+
+errors = await schema.validate({"repo": "owner/name"})
+# [] if repo exists, else [{"path": "repo", "message": "repository not found"}]
+
+# Raises ValidationError like Schema
+result = await schema({"repo": "owner/name"})
+```
+
+## 🧬 JSON Schema import
+
+For MCP tools and external contracts that already speak JSON Schema:
+
+```python
+from tiny_validator import json_schema, from_json_schema
+
+# From a dict
+js = {
+    "type": "object",
+    "properties": {
+        "name":  {"type": "string", "minLength": 1},
+        "age":   {"type": "integer", "minimum": 0},
+        "email": {"type": "string", "format": "email"},
+    },
+    "required": ["name", "email"],
+    "additionalProperties": False,
+}
+validator = json_schema(js)
+errors = validator.validate({"name": "Alice", "email": "alice@example.com"})
+
+# From a JSON string
+schema = from_json_schema('{"type": "object", "properties": {"x": {"type": "integer"}}}')
+```
+
+## 📦 Batch validation
+
+Validate a list of items and split into valid/invalid buckets:
+
+```python
+from tiny_validator import Schema, fields
+
+schema = Schema({
+    "name":  fields.String(min_length=1),
+    "email": fields.Email(),
+})
+
+result = schema.validate_many([
+    {"name": "Alice", "email": "alice@example.com"},
+    {"name": "",      "email": "bad"},
+])
+# result["valid"]   = [first_item]
+# result["invalid"] = [{"item": bad_item, "errors": [...]}]
+```
+
+## 🩹 Partial validation
+
+Ignore unknown fields when the source might include extras (e.g. webhook payloads):
+
+```python
+from tiny_validator import Schema, fields
+
+schema = Schema({"name": fields.String(min_length=1)})
+
+partial = schema.partial()
+errors = partial.validate({"name": "Alice", "extra": "ignored"})
+# errors == []  (extra field is dropped)
 ```
 
 ## 🎀 Decorator
@@ -58,6 +143,7 @@ def search_handler(body, query):
 | `Integer` | `min_value`, `max_value`, `choices` |
 | `Float` | `min_value`, `max_value`, `allow_int` |
 | `Boolean` | — |
+| `AsyncField(validator_fn)` | `required`, `default` — async field with ``await``-able validator |
 | `List(item_field=…)` | `min_length`, `max_length`, `unique` |
 | `Dict(schema=…)` | `required` (alias `Object`) |
 | `Email` / `Url` / `Uuid` | (all extend String) |
@@ -156,8 +242,8 @@ Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure:
 
 - [**tiny-router**](https://github.com/hussain-alsaibai/tiny-router) — HTTP router, 76K req/s
 - [**tiny-log**](https://github.com/hussain-alsaibai/tiny-log) — structured logging
-- [**tiny-validator**](https://github.com/hussain-alsaibai/tiny-validator) — input validation, 247K val/s
-- [**tiny-config**](https://github.com/hussain-alsaibai/tiny-config) — layered config loader
+- [**tiny-validator**](https://github.com/hussain-alsaibai/tiny-validator) — input validation, 247K val/s (v0.2.0: JSON Schema import, batch/partial)
+- [**tiny-config**](https://github.com/hussain-alsaibai/tiny-config) — layered config loader (v0.2.0: validation, secrets, profiles)
 - [**tiny-cli**](https://github.com/hussain-alsaibai/tiny-cli) — CLI builder with colors
 - [**fast-cache**](https://github.com/hussain-alsaibai/fast-cache) — LRU + TTL + SWR cache
 - [**tiny-rate**](https://github.com/hussain-alsaibai/tiny-rate) — rate limiter (token / fixed / sliding)

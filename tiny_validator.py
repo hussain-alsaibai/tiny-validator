@@ -29,7 +29,7 @@ from decimal import InvalidOperation
 from typing import Any, Callable, Iterable, Mapping
 
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 # ---------- Errors ----------
@@ -82,6 +82,22 @@ class Field:
 
     def add_validator(self, fn: Callable[[Any], bool | None], message: str) -> None:
         self._validators.append((fn, message))
+
+    def with_default(self, default: Any) -> "Field":
+        """Return a copy of this field with the given default value.
+
+        Useful for fluent schema construction::
+
+            f = fields.String(min_length=1).with_default("anonymous")
+        """
+        # Create a clone of the same class with default set. We use __class__
+        # but the safest way is to construct a new instance via __init__ with
+        # minimum args; instead, we just clone __dict__ and adjust default.
+        new = self.__class__.__new__(self.__class__)
+        new.__dict__.update(self.__dict__)
+        new.default = default
+        new.required = False
+        return new
 
     def validate(self, value: Any, path: str) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
@@ -509,6 +525,53 @@ class Schema:
                 result[key] = field.default
         return result
 
+    def validate_many(self, items: list[Mapping[str, Any]]) -> dict[str, list[Any]]:
+        """Validate a list of items. Returns ``{"valid": [...], "invalid": [...errors]}``.
+
+        Usage::
+
+            result = schema.validate_many([
+                {"name": "Alice", "email": "alice@example.com"},
+                {"name": "", "email": "bad"},
+            ])
+            # result["valid"]   = [valid_item]
+            # result["invalid"] = [{"item": item, "errors": errors_for_invalid}]
+        """
+        valid: list[Any] = []
+        invalid: list[dict[str, Any]] = []
+        for item in items:
+            errors = self.validate(item)
+            if errors:
+                invalid.append({"item": item, "errors": errors})
+            else:
+                valid.append(item)
+        return {"valid": valid, "invalid": invalid}
+
+    def partial(self) -> "PartialSchema":
+        """Return a partial-validating schema (skips unknown fields).
+
+        Usage::
+
+            partial = schema.partial()  # ignore extra fields
+            errors = partial.validate({"name": "Alice", "extra": "ignored"})
+        """
+        return PartialSchema(self)
+
+
+class PartialSchema:
+    """A schema that ignores unknown fields. Wraps Schema for partial validation."""
+
+    def __init__(self, schema: "Schema") -> None:
+        self._schema = schema
+        self.fields = schema.definition
+
+    def validate(self, data: Any) -> list[dict[str, Any]]:
+        if not isinstance(data, MappingABC):
+            return [{"path": "", "message": "expected dict"}]
+        # Only validate known fields
+        filtered = {k: v for k, v in data.items() if k in self._schema.definition}
+        return self._schema.validate(filtered)
+
 
 # ---------- Decorators ----------
 
@@ -562,46 +625,64 @@ def http_error_response(exc: ValidationError) -> dict[str, Any]:
     return exc.to_dict()
 
 
-# ---------- JSON Schema bridge (subset) ----------
+# ---------- JSON Schema compatibility ----------
 
 
-def from_json_schema(
-    schema: Mapping[str, Any],
-    *,
-    strict: bool = True,
-) -> Schema:
-    """Build a ``Schema`` from a JSON Schema subset.
+def json_schema(schema: Mapping[str, Any]) -> "Schema":
+    """Convert a JSON Schema dict to a tiny-validator Schema.
 
-    Supported keywords:
+    Supports a useful subset of JSON Schema:
 
     - ``type``: ``object``, ``string``, ``integer``, ``number``, ``boolean``,
-      ``array``, ``null``.
+      ``array``, ``null`` (or list of types).
     - ``properties`` + ``required`` for objects.
-    - ``items`` for arrays.
+    - ``items`` for arrays (with ``minItems``/``maxItems``).
     - ``enum`` for fixed-value fields.
     - ``pattern`` for string regex.
     - ``minimum`` / ``maximum`` / ``exclusiveMinimum`` / ``exclusiveMaximum``
       for numeric bounds.
     - ``minLength`` / ``maxLength`` for strings.
-    - ``minItems`` / ``maxItems`` for arrays.
-    - ``format``: ``email``, ``uri``, ``uuid``, ``date``, ``date-time``.
+    - ``format``: ``email``, ``uri``, ``url``, ``uuid``, ``date``, ``date-time``.
     - ``default`` for default values.
+    - ``additionalProperties: False`` enables strict mode (reject unknown keys).
 
-    Anything outside this subset raises ``ValueError`` so callers get a clear
-    error instead of silent acceptance. The goal is to validate the JSON
-    Schemas used by MCP tool definitions and agent config files without
-    pulling in ``jsonschema`` or ``pydantic``.
+    Unknown keywords raise ``ValueError`` so callers get a clear error instead
+    of silent acceptance. The goal is to validate the JSON Schemas used by
+    MCP tool definitions and agent config files without pulling in
+    ``jsonschema`` or ``pydantic``.
+
+    Usage::
+
+        js = {
+            "type": "object",
+            "properties": {
+                "name":  {"type": "string", "minLength": 1},
+                "age":   {"type": "integer", "minimum": 0},
+                "email": {"type": "string", "format": "email"},
+            },
+            "required": ["name", "email"],
+        }
+        validator = json_schema(js)
+        errors = validator.validate({"name": "Alice", "email": "alice@example.com"})
     """
-
     if not isinstance(schema, MappingABC):
         raise ValueError("json schema root must be an object")
 
+    additional_properties = schema.get("additionalProperties", True)
+    strict = additional_properties is False
+
     json_type = schema.get("type", "object")
+    if isinstance(json_type, list):
+        # JSON Schema allows ["string", "null"]. Take the first non-null type.
+        non_null = [t for t in json_type if t != "null"]
+        if not non_null:
+            raise ValueError("root json schema: type list contains only null")
+        json_type = non_null[0]
+
     if json_type != "object":
-        raise ValueError(
-            "root json schema must declare type='object'; got "
-            f"{json_type!r}. Wrap nested types in properties/items."
-        )
+        # Wrap a primitive in a single-field Schema for ergonomic use.
+        field = _json_schema_type_to_field("value", schema)
+        return Schema({"value": field}, strict=strict)
 
     properties = schema.get("properties", {})
     if not isinstance(properties, MappingABC):
@@ -612,18 +693,20 @@ def from_json_schema(
         missing = sorted(required - properties.keys())
         raise ValueError(f"required fields missing from properties: {missing}")
 
-    fields: dict[str, Field] = {}
-    for name, sub_schema in properties.items():
-        field = _build_field_from_json_schema(name, sub_schema)
-        if name not in required:
-            field.default = sub_schema.get("default", None)
+    tiny_fields: Dict[str, Field] = {}
+    for key, sub_schema in properties.items():
+        field = _json_schema_type_to_field(key, sub_schema)
+        if key in required:
+            field.required = True
+        else:
             field.required = False
-        fields[name] = field
+        tiny_fields[key] = field
 
-    return Schema(fields, strict=strict)
+    return Schema(tiny_fields, strict=strict)
 
 
-def _build_field_from_json_schema(name: str, sub_schema: Any) -> Field:
+def _json_schema_type_to_field(name: str, sub_schema: Any) -> Field:
+    """Convert a JSON Schema property to a tiny-validator field."""
     if not isinstance(sub_schema, MappingABC):
         raise ValueError(f"property {name!r}: schema must be an object")
 
@@ -653,7 +736,6 @@ def _build_field_from_json_schema(name: str, sub_schema: Any) -> Field:
 
     json_type = sub_schema.get("type", "string")
     if isinstance(json_type, list):
-        # JSON Schema allows ["string", "null"]. Take the first non-null type.
         non_null = [t for t in json_type if t != "null"]
         if not non_null:
             raise ValueError(f"property {name!r}: type list contains only null")
@@ -661,19 +743,18 @@ def _build_field_from_json_schema(name: str, sub_schema: Any) -> Field:
 
     field: Field
     if json_type == "string":
-        field = _string_field(sub_schema)
+        field = _json_string_field(sub_schema)
     elif json_type == "integer":
-        field = _integer_field(sub_schema)
+        field = _json_integer_field(sub_schema)
     elif json_type in ("number", "float"):
-        field = _float_field(sub_schema)
+        field = _json_float_field(sub_schema)
     elif json_type == "boolean":
         field = Boolean()
     elif json_type == "array":
-        field = _array_field(sub_schema)
+        field = _json_array_field(sub_schema)
     elif json_type == "object":
-        field = _object_field(sub_schema)
+        field = _json_object_field(sub_schema)
     elif json_type == "null":
-        # No useful validator; treat as Any.
         field = Any()
     else:
         raise ValueError(f"property {name!r}: unsupported type {json_type!r}")
@@ -682,36 +763,38 @@ def _build_field_from_json_schema(name: str, sub_schema: Any) -> Field:
         enum_values = sub_schema["enum"]
         if not isinstance(enum_values, list):
             raise ValueError(f"property {name!r}: 'enum' must be a list")
-        field.add_validator(lambda value, choices=enum_values: value in choices, f"value must be one of {enum_values}")
+        field.add_validator(
+            lambda value, choices=enum_values: value in choices,
+            f"value must be one of {enum_values}",
+        )
     if "description" in sub_schema and isinstance(sub_schema["description"], str):
         field.description = sub_schema["description"]
+    if "default" in sub_schema:
+        field.default = sub_schema["default"]
     return field
 
 
-def _string_field(sub_schema: Mapping[str, Any]) -> String:
+def _json_string_field(sub_schema: Mapping[str, Any]) -> String:
     fmt = sub_schema.get("format")
-    kwargs = {
+    kwargs: Dict[str, Any] = {
         "min_length": sub_schema.get("minLength") if isinstance(sub_schema.get("minLength"), int) else None,
         "max_length": sub_schema.get("maxLength") if isinstance(sub_schema.get("maxLength"), int) else None,
         "pattern": sub_schema.get("pattern") if isinstance(sub_schema.get("pattern"), str) else None,
     }
-    field: String
     if fmt == "email":
-        field = Email(**kwargs)
-    elif fmt == "uri" or fmt == "url":
-        field = Url(**kwargs)
-    elif fmt == "uuid":
-        field = Uuid(**kwargs)
-    elif fmt == "date":
-        field = Date(**kwargs)
-    elif fmt == "date-time":
-        field = DateTime(**kwargs)
-    else:
-        field = String(**kwargs)
-    return field
+        return Email(**kwargs)
+    if fmt == "uri" or fmt == "url":
+        return Url(**kwargs)
+    if fmt == "uuid":
+        return Uuid(**kwargs)
+    if fmt == "date":
+        return Date(**kwargs)
+    if fmt == "date-time":
+        return DateTime(**kwargs)
+    return String(**kwargs)
 
 
-def _integer_field(sub_schema: Mapping[str, Any]) -> Integer:
+def _json_integer_field(sub_schema: Mapping[str, Any]) -> Integer:
     minimum = sub_schema.get("minimum")
     maximum = sub_schema.get("maximum")
     field = Integer(
@@ -720,14 +803,20 @@ def _integer_field(sub_schema: Mapping[str, Any]) -> Integer:
     )
     exclusive_minimum = sub_schema.get("exclusiveMinimum")
     if isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool):
-        field.add_validator(lambda value, limit=exclusive_minimum: value > limit, f"value must be > {exclusive_minimum}")
+        field.add_validator(
+            lambda value, limit=exclusive_minimum: value > limit,
+            f"value must be > {exclusive_minimum}",
+        )
     exclusive_maximum = sub_schema.get("exclusiveMaximum")
     if isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool):
-        field.add_validator(lambda value, limit=exclusive_maximum: value < limit, f"value must be < {exclusive_maximum}")
+        field.add_validator(
+            lambda value, limit=exclusive_maximum: value < limit,
+            f"value must be < {exclusive_maximum}",
+        )
     return field
 
 
-def _float_field(sub_schema: Mapping[str, Any]) -> Float:
+def _json_float_field(sub_schema: Mapping[str, Any]) -> Float:
     minimum = sub_schema.get("minimum")
     maximum = sub_schema.get("maximum")
     field = Float(
@@ -736,46 +825,209 @@ def _float_field(sub_schema: Mapping[str, Any]) -> Float:
     )
     exclusive_minimum = sub_schema.get("exclusiveMinimum")
     if isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool):
-        field.add_validator(lambda value, limit=exclusive_minimum: value > limit, f"value must be > {exclusive_minimum}")
+        field.add_validator(
+            lambda value, limit=exclusive_minimum: value > limit,
+            f"value must be > {exclusive_minimum}",
+        )
     exclusive_maximum = sub_schema.get("exclusiveMaximum")
     if isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool):
-        field.add_validator(lambda value, limit=exclusive_maximum: value < limit, f"value must be < {exclusive_maximum}")
+        field.add_validator(
+            lambda value, limit=exclusive_maximum: value < limit,
+            f"value must be < {exclusive_maximum}",
+        )
     return field
 
 
-def _array_field(sub_schema: Mapping[str, Any]) -> List:
+def _json_array_field(sub_schema: Mapping[str, Any]) -> List:
     items_schema = sub_schema.get("items")
     min_items = sub_schema.get("minItems")
     max_items = sub_schema.get("maxItems")
-    kwargs = {
+    kwargs: Dict[str, Any] = {
         "min_length": min_items if isinstance(min_items, int) else None,
         "max_length": max_items if isinstance(max_items, int) else None,
     }
     if items_schema is None:
-        # Untyped arrays: accept any element.
-        field = List(Any(), **kwargs)
-    else:
-        item_field = _build_field_from_json_schema("items", items_schema)
-        field = List(item_field, **kwargs)
-    return field
+        return List(Any(), **kwargs)
+    item_field = _json_schema_type_to_field("items", items_schema)
+    return List(item_field, **kwargs)
 
 
-def _object_field(sub_schema: Mapping[str, Any]) -> Dict_:
-    nested = from_json_schema(
-        {"type": "object", **sub_schema},
-        strict=sub_schema.get("additionalProperties", True) is False,
-    )
+def _json_object_field(sub_schema: Mapping[str, Any]) -> Dict_:
+    nested = json_schema({"type": "object", **sub_schema})
     return Dict_(schema=nested)
+
+
+def from_json_schema(
+    source: "str | Mapping[str, Any]",
+    *,
+    strict: bool = True,
+) -> Schema:
+    """Load a Schema from a JSON Schema string or dict.
+
+    Accepts either a JSON string or an already-parsed dict. Same supported
+    subset as :func:`json_schema`.
+
+    Usage::
+
+        schema = from_json_schema('{"type": "object", "properties": {...}}')
+        schema = from_json_schema({"type": "object", ...})
+    """
+    if isinstance(source, str):
+        import json as _json
+        try:
+            source = _json.loads(source)
+        except _json.JSONDecodeError as exc:
+            raise ValidationError(f"invalid JSON Schema string: {exc}") from exc
+    schema = json_schema(source)
+    if strict and not schema.strict:
+        # Honor the explicit strict request from the caller.
+        schema.strict = True
+    return schema
+
+
+# ---------- Async field (for validator+async-fn patterns) ----------
+
+
+class AsyncField(Field):
+    """A field that validates asynchronously.
+
+    ``validator_fn`` is called with the value and must return ``None`` on success
+    or an error ``str`` on failure. ``await`` is stripped automatically by
+    :class:`AsyncValidator`.
+
+    Example::
+
+        from tiny_validator import AsyncField, AsyncValidator
+
+        async def check_repo_exists(value: str) -> str | None:
+            exists = await check_github(value)
+            return None if exists else "repository not found"
+
+        schema = AsyncValidator({
+            "repo": AsyncField(validator_fn=check_repo_exists),
+        })
+
+        errors = await schema.validate({"repo": "hussain-alsaibai/nonexistent"})
+    """
+
+    def __init__(
+        self,
+        validator_fn: "Callable[[Any], Awaitable[str | None] | str | None]",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._validator = validator_fn
+
+    def validate(self, value: Any, path: str) -> list[dict[str, Any]]:
+        # Sync call — wrap in sync error if called directly
+        return []  # async fields must be validated by AsyncValidator
+
+    async def avalidate(self, value: Any, path: str) -> list[dict[str, Any]]:
+        errors: list[dict[str, Any]] = []
+        if value is _MISSING:
+            if self.required and self.default is ...:
+                errors.append({"path": path, "message": "missing required field"})
+            return errors
+        if value is None:
+            if not self.allow_none:
+                errors.append({"path": path, "message": "value is null"})
+            return errors
+        try:
+            result = self._validator(value)
+            if hasattr(result, "__await__"):
+                result = await result
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"path": path, "message": f"async validation error: {exc}"})
+            return errors
+        if result is not None:
+            msg = result if isinstance(result, str) else "invalid"
+            errors.append({"path": path, "message": msg})
+        return errors
+
+
+class AsyncValidator:
+    """Async-aware schema validator.
+
+    Works like :class:`Schema` but supports :class:`AsyncField` for fields that
+    need to call external services (databases, APIs) during validation.
+
+    Usage::
+
+        from tiny_validator import AsyncField, AsyncValidator, fields
+
+        async def validate_github(value: str) -> str | None:
+            return None if await repo_exists(value) else "repo not found"
+
+        v = AsyncValidator({
+            "repo": AsyncField(validate_github),
+            "limit": fields.Integer(default=10),
+        })
+
+        errors = await v.validate({"repo": "owner/name"})
+    """
+
+    def __init__(self, definition: Mapping[str, Field], *, strict: bool = False) -> None:
+        self.definition = dict(definition)
+        self.strict = strict
+
+    async def validate(
+        self,
+        data: Mapping[str, Any],
+        *,
+        base_path: str = "",
+    ) -> list[dict[str, Any]]:
+        errors: list[dict[str, Any]] = []
+        if not isinstance(data, MappingABC):
+            return [{"path": base_path or "", "message": "expected object"}]
+
+        if self.strict:
+            extras = set(data.keys()) - set(self.definition.keys())
+            for extra in extras:
+                errors.append(
+                    {
+                        "path": f"{base_path}.{extra}" if base_path else extra,
+                        "message": "unexpected field",
+                    }
+                )
+
+        for key, field in self.definition.items():
+            full_path = f"{base_path}.{key}" if base_path else key
+            value = data.get(key, _MISSING)
+            if value is _MISSING and field.default is not Ellipsis:
+                value = field.default
+            if isinstance(field, AsyncField):
+                errors.extend(await field.avalidate(value, full_path))
+            else:
+                errors.extend(field.validate(value, full_path))
+
+        return errors
+
+    async def __call__(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        errors = await self.validate(data)
+        if errors:
+            raise ValidationError(errors)
+        result: dict[str, Any] = dict(data)
+        for key, field in self.definition.items():
+            if key not in result and field.default is not Ellipsis:
+                result[key] = field.default
+        return result
+
+
+from typing import Awaitable
 
 
 __all__ = [
     "Schema",
+    "PartialSchema",
     "Field",
     "ValidationError",
     "fields",
     "validate",
+    "json_schema",
     "from_json_schema",
     "http_error_response",
+    "AsyncField",
+    "AsyncValidator",
     "Any",
     "String",
     "Integer",
