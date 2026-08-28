@@ -29,7 +29,7 @@ from decimal import InvalidOperation
 from typing import Any, Callable, Iterable, Mapping
 
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 # ---------- Errors ----------
@@ -453,6 +453,114 @@ Decimal_ = Decimal_  # keep name; alias
 Decimal = Decimal_
 
 
+# ---------------------------------------------------------------------------
+# v0.3.0 field types
+# ---------------------------------------------------------------------------
+
+
+class Json(Field):
+    """Validates a value is valid JSON (accepts str, dict, list).
+
+    With ``serialize=True`` (default) returns the string form; with
+    ``serialize=False`` returns the parsed object.
+    """
+
+    def __init__(self, *, serialize: bool = True, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.serialize = serialize
+        self.add_validator(
+            lambda v: self._is_valid(v),
+            "value must be valid JSON",
+        )
+
+    @staticmethod
+    def _is_valid(v: Any) -> bool:
+        if isinstance(v, (dict, list, int, float, bool)):
+            return True
+        if isinstance(v, str):
+            try:
+                _json_mod.loads(v)
+                return True
+            except ValueError:
+                return False
+        return False
+
+    def _coerce(self, value: Any) -> Any:
+        if self.serialize and not isinstance(value, str):
+            return _json_mod.dumps(value)
+        if not self.serialize and isinstance(value, str):
+            return _json_mod.loads(value)
+        return value
+
+
+class IP(String):
+    """Validates an IPv4 or IPv6 address (stdlib ipaddress)."""
+
+    def __init__(self, *, version: int | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.version = version
+
+        def _check(v: str) -> bool:
+            try:
+                if self.version == 4:
+                    _ip.IPv4Address(v)
+                elif self.version == 6:
+                    _ip.IPv6Address(v)
+                else:
+                    _ip.ip_address(v)
+                return True
+            except ValueError:
+                return False
+
+        self.add_validator(_check, f"value must be a valid IP address" +
+                           (f" (v{version})" if version else ""))
+
+
+class Slug(String):
+    """Validates URL-friendly slugs: lowercase alnum + hyphens."""
+
+    SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.add_validator(
+            lambda v: bool(self.SLUG_RE.match(v)),
+            "value must be a valid slug (lowercase alphanumeric, hyphens)",
+        )
+
+
+class Regex(String):
+    """Validates a string against a caller-supplied regex pattern."""
+
+    def __init__(self, pattern: str, *, flags: int = 0, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._compiled = re.compile(pattern, flags)
+        self.add_validator(
+            lambda v: bool(self._compiled.match(v)),
+            f"value must match pattern {pattern!r}",
+        )
+
+    def extras_for_schema(self) -> Dict[str, Any]:
+        return {"pattern": self._compiled.pattern}
+
+
+class HexColor(String):
+    """Validates hex colors: #RGB, #RRGGBB, #RRGGBBAA."""
+
+    COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.add_validator(
+            lambda v: bool(self.COLOR_RE.match(v)),
+            "value must be a hex color (#RGB, #RRGGBB, or #RRGGBBAA)",
+        )
+
+
+import ipaddress as _ip
+import json as _json_mod
+
+
 # Alias `fields` namespace for ergonomic imports
 class _FieldsNS:
     Any = Any  # type: ignore[misc]
@@ -469,6 +577,11 @@ class _FieldsNS:
     Date = Date
     DateTime = DateTime
     Decimal = Decimal_
+    Json = Json
+    IP = IP
+    Slug = Slug
+    Regex = Regex
+    HexColor = HexColor
 
 
 fields = _FieldsNS()
