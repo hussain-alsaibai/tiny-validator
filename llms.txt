@@ -1,0 +1,85 @@
+# tiny-validator
+
+> Zero-dependency validator for Python. JSV-style + new schema + JSON Schema import. One call. Built for humans and AI agents.
+
+- Version: 0.3.0
+- License: MIT
+- Repository: https://github.com/hussain-alsaibai/tiny-validator
+- Language: Python (3.8+)
+- Runtime dependencies: 0
+- Install: `pip install tiny-validator` (or copy `tiny_validator.py`)
+- Docs: README.md, `pyproject.toml`, `benchmark.py`
+
+## What this library does
+
+Provides field-level validation against a schema — required, type, range, length,
+format, regex — and full JSON Schema import (draft-07 subset). Validates nested
+structures, batch-validates lists, and supports partial schemas (validate subset
+of fields and ignore the rest).
+
+## When to use it
+
+- You need validation smaller than `jsonschema` (~150KB with `rpds-py`).
+- You want zero transitive dependencies.
+- You need field-level detailed error messages.
+- You want to validate agent tool-call arguments against a JSON Schema.
+- You need to import existing JSON Schema files unchanged.
+
+## When NOT to use it
+
+- You need full JSON Schema 2020-12 (subset only).
+- You need to validate against OpenAPI Schema Objects (use `openapi-spec-validator`).
+- You need async validation pipelines (sync only).
+
+## Public API
+
+- `tiny_validator.validate(value, schema) -> (ok: bool, errors: list)`
+- `tiny_validator.field(name, **rules)` — field with rules builder
+- `tiny_validator.Json`, `tiny_validator.IP`, `tiny_validator.Slug`, `tiny_validator.Regex`, `tiny_validator.HexColor` — built-in field types
+- `tiny_validator.batch(values, schema)` — list validate
+- `tiny_validator.partial(schema)` — validate subset of fields
+- `tiny_validator.from_json_schema(d)` — import draft-07
+
+## Schema syntax
+
+```python
+schema = {
+    "name": {"required": True, "type": "string", "minlen": 1, "maxlen": 100},
+    "email": {"required": True, "type": "string", "regex": r"^[^@]+@[^@]+$"},
+    "age": {"type": "int", "min": 0, "max": 150},
+    "role": {"type": "string", "choices": ["admin", "user", "guest"]},
+    "address": {"type": "dict", "fields": {
+        "city": {"required": True, "type": "string"},
+        "zip": {"type": "string", "regex": r"^\d{5}$"},
+    }},
+}
+ok, errors = tv.validate({"name": "Alice", "email": "a@b.c", "age": 30, "role": "admin"}, schema)
+```
+
+## Integration with the tiny-* ecosystem
+
+- After `tiny-config` loads, `tiny-validator` validates the result.
+- `tiny-mcp-server` validates inbound tool-call arguments against tool schemas.
+- `tiny-router` validates request body against route-level schema.
+
+## Compatibility
+
+- Python 3.8 – 3.13 confirmed.
+- No C extensions.
+- Pure Python implementation, ~600 LOC.
+
+## Common pitfalls
+
+1. `required: True` is enforced per-field; missing fields are reported in `errors`.
+2. `type` accepts: `string`, `int`, `float`, `bool`, `list`, `dict`, `null`.
+3. `regex` is anchored implicitly — escape `^` and `$` only if needed.
+4. JSON Schema import supports `required`, `properties`, `type`, `enum`, `format`,
+   `pattern`, `minimum`, `maximum`, `minLength`, `maxLength` — full $ref resolution
+   requires `tv.enable_refs()`.
+
+## Changelog
+
+- 0.3.0 — Json, IP, Slug, Regex, HexColor field types
+- 0.2.0 — JSON Schema import, batch validation, partial schemas
+- 0.1.0 — initial release
+
