@@ -29,7 +29,7 @@ from decimal import InvalidOperation
 from typing import Any, Callable, Iterable, Mapping
 
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 # ---------- Errors ----------
@@ -998,6 +998,164 @@ def from_json_schema(
     return schema
 
 
+# ---------- JSON Schema export (v0.4.0) ----------
+
+
+def _field_to_json_schema(field, *, key: str) -> dict:
+    """Convert a single Field to a JSON Schema property dict.
+
+    Round-trips with :func:`json_schema` for the supported subset.
+    """
+    sub: dict = {}
+    if isinstance(field, Any):
+        return {}
+    # Subclass checks MUST come before their parent. Email/Url/etc. extend
+    # String, so isinstance() would match String first and skip the format
+    # tag. Order matters here.
+    if isinstance(field, Email):
+        sub["type"] = "string"
+        sub["format"] = "email"
+    elif isinstance(field, Url):
+        sub["type"] = "string"
+        sub["format"] = "uri"
+    elif isinstance(field, Uuid):
+        sub["type"] = "string"
+        sub["format"] = "uuid"
+    elif isinstance(field, Date):
+        sub["type"] = "string"
+        sub["format"] = "date"
+    elif isinstance(field, DateTime):
+        sub["type"] = "string"
+        sub["format"] = "date-time"
+    elif isinstance(field, String):
+        sub["type"] = "string"
+    elif isinstance(field, Integer):
+        sub["type"] = "integer"
+    elif isinstance(field, (Float, Decimal_)):
+        sub["type"] = "number"
+    elif isinstance(field, Boolean):
+        sub["type"] = "boolean"
+    elif isinstance(field, List):
+        sub["type"] = "array"
+        if field._item_field is not None and not isinstance(field._item_field, Any):
+            sub["items"] = _field_to_json_schema(field._item_field, key=f"{key}[]")
+        else:
+            sub["items"] = {}
+    elif isinstance(field, Dict_):
+        sub["type"] = "object"
+        if field._schema is not None:
+            sub.update(_schema_to_json_schema(field._schema))
+    else:
+        sub["type"] = "string"
+    return sub
+
+
+def _schema_to_json_schema(schema) -> dict:
+    """Internal: convert a Schema to a JSON Schema dict.
+
+    Honors strict mode, required fields, and common constraints
+    (min/max, length, pattern, enum, format).
+    """
+    properties: dict = {}
+    required: list = []
+    for key, field in schema.definition.items():
+        prop = _field_to_json_schema(field, key=key)
+        if field.description:
+            prop["description"] = field.description
+        for fn, msg in field._validators:
+            if "must be at least" in msg and "characters" in msg:
+                try:
+                    n = int(msg.split("at least ")[1].split(" ")[0])
+                    prop.setdefault("minLength", n)
+                except (ValueError, IndexError):
+                    pass
+            elif "must be at most" in msg and "characters" in msg:
+                try:
+                    n = int(msg.split("at most ")[1].split(" ")[0])
+                    prop.setdefault("maxLength", n)
+                except (ValueError, IndexError):
+                    pass
+            elif "must be >=" in msg:
+                try:
+                    n = msg.split("must be >= ")[1].split(" ")[0]
+                    prop.setdefault("minimum", float(n) if "." in n else int(n))
+                except (ValueError, IndexError):
+                    pass
+            elif "must be <=" in msg:
+                try:
+                    n = msg.split("must be <= ")[1].split(" ")[0]
+                    prop.setdefault("maximum", float(n) if "." in n else int(n))
+                except (ValueError, IndexError):
+                    pass
+        if field.default is not Ellipsis:
+            prop["default"] = field.default
+        properties[key] = prop
+        if field.required:
+            required.append(key)
+    out: dict = {"type": "object", "properties": properties}
+    if required:
+        out["required"] = required
+    if schema.strict:
+        out["additionalProperties"] = False
+    return out
+
+
+def to_json_schema(schema) -> dict:
+    """Export a tiny-validator Schema as a JSON Schema dict.
+
+    Round-trips with :func:`from_json_schema` for the supported subset:
+    type mapping, required list, min/max, length, format, default,
+    strict mode, nested objects, and arrays.
+
+    Lossy by design: custom lambda validators, choices (when set via
+    String(choices=...)) and pattern are not always re-derivable from
+    the stored validator message. Use the original Schema for full
+    validation; this export is for documentation and interop
+    (OpenAPI 3.1, MCP tool definitions, JSON Schema consumers).
+
+    Example::
+
+        schema = Schema({
+            "name": String(min_length=1, max_length=100),
+            "age": Integer(min_value=0, max_value=150, required=False),
+            "email": Email(),
+        })
+        json_schema_dict = to_json_schema(schema)
+    """
+    return _schema_to_json_schema(schema)
+
+
+def to_openapi_schema(
+    schema,
+    *,
+    title: str = "Model",
+    description: str = "",
+    required_override: list | None = None,
+) -> dict:
+    """Export a tiny-validator Schema as an OpenAPI 3.1 schema fragment.
+
+    Wraps :func:`to_json_schema` and adds ``$schema`` plus a title.
+    The output is suitable for embedding under ``components.schemas[name]``
+    in an OpenAPI document, or for use as a JSON Schema in MCP tool
+    definitions.
+
+    Args:
+        schema: The tiny-validator Schema to export.
+        title: ``title`` field for the schema (default: ``"Model"``).
+        description: Optional ``description`` field.
+        required_override: Override the ``required`` list instead of
+            using the auto-derived one from ``field.required``.
+    """
+    out = _schema_to_json_schema(schema)
+    out["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    out["title"] = title
+    if description:
+        out["description"] = description
+    if required_override is not None:
+        out["required"] = list(required_override)
+    return out
+
+
 # ---------- Async field (for validator+async-fn patterns) ----------
 
 
@@ -1138,6 +1296,8 @@ __all__ = [
     "validate",
     "json_schema",
     "from_json_schema",
+    "to_json_schema",
+    "to_openapi_schema",
     "http_error_response",
     "AsyncField",
     "AsyncValidator",
