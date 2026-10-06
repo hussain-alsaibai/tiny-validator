@@ -2,7 +2,7 @@
 
 > **Like Pydantic, but in one file. Zero dependencies.**
 
-[![version 0.2.0](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/hussain-alsaibai/tiny-validator)
+[![version 0.5.0](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/hussain-alsaibai/tiny-validator)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](tiny_validator.py)
@@ -236,6 +236,31 @@ See also:
 python test_tiny_validator.py -v
 ```
 
+
+## MCP sidecar (v0.5.0)
+
+Validation for the [Model Context Protocol](https://modelcontextprotocol.io) server-manifest format lives in the opt-in sidecar module `tiny_validator_mcp.py`. The core package stays at zero dependencies; importing the sidecar only pulls in `tiny_validator` (already a dependency).
+
+```python
+from tiny_validator import Schema, String
+from tiny_validator_mcp import McpServer, McpTool, validate_mcp_manifest
+
+server = McpServer(
+    name="my-mcp",
+    version="0.1.0",
+    title="My MCP Server",
+    tools=[McpTool(name="echo", description="Echo the input back to the caller.",
+                    input_schema=Schema({"text": String(min_length=1)}))],
+    metrics=["mcp_my_mcp_calls_total", "mcp_my_mcp_latency_seconds_bucket"],
+)
+errors = validate_mcp_manifest(server.to_dict())
+assert not errors
+```
+
+The sidecar validates three layers: (1) structural via SERVER_SCHEMA, (2) per-element via TOOL_SCHEMA/RESOURCE_SCHEMA/PROMPT_SCHEMA, (3) metric labels via metric_label_check, enforcing the de-facto `mcp_<server>_<unit>_(total|bucket|sum|count|created|info)` pattern.
+
+See `tiny_validator_mcp.py` for the full API and `test_v050_mcp.py` for 39 tests covering it.
+
 ## Ecosystem
 
 Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure:
@@ -250,7 +275,8 @@ Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure:
 - [**tiny-retry**](https://github.com/hussain-alsaibai/tiny-retry) — retry + backoff + circuit breaker
 - [**tiny-pool**](https://github.com/hussain-alsaibai/tiny-pool) — ThreadPool + AsyncPool
 - [**tiny-agent**](https://github.com/hussain-alsaibai/tiny-agent) — zero-dep agent framework
-- [**tiny-mcp**](https://github.com/hussain-alsaibai/tiny-mcp) — Model Context Protocol
+- [**tiny-mcp**](https://github.com/hussain-alsaibai/tiny-mcp)
+- [**tiny-mcp-skel**](https://github.com/hussain-alsaibai/tiny-mcp-skel) - stdlib-only MCP server skeleton (combines tiny-router blueprints + tiny-validator McpServer schema, ships today). — Model Context Protocol
 - [**tiny-embed**](https://github.com/hussain-alsaibai/tiny-embed) — embeddings + vector search
 - [**tiny-compose**](https://github.com/hussain-alsaibai/tiny-compose) — Stack any decorators in any order, declaratively
 - [**tiny-trace**](https://github.com/hussain-alsaibai/tiny-trace) — OTel-compatible tracing, sync + async, W3C propagation
