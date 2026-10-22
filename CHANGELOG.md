@@ -2,6 +2,24 @@
 
 All notable changes to tiny-validator are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-10-22
+
+### Fixed
+- **`to_json_schema()` dropped `choices` and `pattern` entirely.** `String(choices=["admin", "user"])` exported as bare `{"type": "string"}` and `Integer(choices=[1, 2])` as bare `{"type": "integer"}`. Any consumer of the exported schema - OpenAPI docs, MCP tool definitions, generated clients - saw an unconstrained field where the real schema was constrained. The same loss made `to_json_schema()` -> `from_json_schema()` round-trips silently permissive.
+- **Arbitrary validator prose could invent constraints.** `_schema_to_json_schema` recovered bounds by substring-matching human-readable validator messages such as `"string must be at least 2 characters"`. A custom validator whose message merely *contained* that phrasing - e.g. `add_validator(fn, "must be at least 999 characters of prose")` - produced a bogus `minLength: 999` in the exported schema.
+
+### Changed
+- **`Field` now records structural constraints at construction time.** `Field.set_constraint()`, `Field.get_constraint()` and a read-only `Field.constraints` property were added; `String`, `Integer`, `Float` and `List` populate them.
+- **`_schema_to_json_schema` reads recorded constraints** instead of parsing validator message strings. String parsing is gone, so exports are now exact rather than best-effort.
+
+### Added
+- **`Field.constraints`** - public, returns a copy, mapping JSON Schema keyword names (`minLength`, `maxLength`, `pattern`, `enum`, `minimum`, `maximum`, `minItems`, `maxItems`) to values.
+- **New test file `test_v060_export.py`** (19 tests) covering constraint export for every affected field type, the prose false-positive case, and `enum`/`pattern` round-trips. Combined suite now 114/114.
+
+### Compatibility
+- No breaking API changes. Validation behaviour is identical; only the *export* fidelity improved. `Field.constraints` is additive.
+- Fields built by third-party subclasses that never call `set_constraint` export exactly as before - no invented keywords.
+
 ## [0.5.0] - 2026-10-06
 
 ### Added

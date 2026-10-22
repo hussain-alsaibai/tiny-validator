@@ -29,7 +29,7 @@ from decimal import InvalidOperation
 from typing import Any, Callable, Iterable, Mapping
 
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"
 
 
 # ---------- Errors ----------
@@ -79,9 +79,30 @@ class Field:
         self.default = default
         self.description = description
         self._validators: list[tuple[Callable[[Any], bool | None], str]] = []
+        # Structural constraints recorded at construction time (v0.6.0).
+        # The JSON Schema exporter reads these instead of parsing validator
+        # message strings, which silently dropped choices/pattern and could
+        # invent constraints from unrelated prose.
+        self._constraints: dict[str, Any] = {}
 
     def add_validator(self, fn: Callable[[Any], bool | None], message: str) -> None:
         self._validators.append((fn, message))
+
+    def set_constraint(self, name: str, value: Any) -> None:
+        """Record a structural constraint for schema export.
+
+        Called by field constructors. Values are exported verbatim as JSON
+        Schema keywords, so only use names that map to real keywords.
+        """
+        if value is not None:
+            self._constraints[name] = value
+
+    def get_constraint(self, name: str, default: Any = None) -> Any:
+        return self._constraints.get(name, default)
+
+    @property
+    def constraints(self) -> dict[str, Any]:
+        return dict(self._constraints)
 
     def with_default(self, default: Any) -> "Field":
         """Return a copy of this field with the given default value.
@@ -163,23 +184,27 @@ class String(Field):
     ) -> None:
         super().__init__(**kwargs)
         if min_length is not None:
+            self.set_constraint("minLength", min_length)
             self.add_validator(
                 lambda v: len(v) >= min_length,
                 f"string must be at least {min_length} characters",
             )
         if max_length is not None:
+            self.set_constraint("maxLength", max_length)
             self.add_validator(
                 lambda v: len(v) <= max_length,
                 f"string must be at most {max_length} characters",
             )
         if pattern is not None:
             compiled = re.compile(pattern)
+            self.set_constraint("pattern", pattern)
             self.add_validator(
                 lambda v: bool(compiled.search(v)),
                 f"string must match pattern {pattern!r}",
             )
         if choices is not None:
             choices_list = list(choices)
+            self.set_constraint("enum", list(choices_list))
             if case_insensitive:
                 lower = {c.lower(): c for c in choices_list}
 
@@ -210,11 +235,14 @@ class Integer(Field):
     ) -> None:
         super().__init__(**kwargs)
         if min_value is not None:
+            self.set_constraint("minimum", min_value)
             self.add_validator(lambda v: v >= min_value, f"value must be >= {min_value}")
         if max_value is not None:
+            self.set_constraint("maximum", max_value)
             self.add_validator(lambda v: v <= max_value, f"value must be <= {max_value}")
         if choices is not None:
             choices_list = list(choices)
+            self.set_constraint("enum", list(choices_list))
             self.add_validator(
                 lambda v: v in choices_list,
                 f"value must be one of {choices_list}",
@@ -239,8 +267,10 @@ class Float(Field):
         super().__init__(**kwargs)
         self._allow_int = allow_int
         if min_value is not None:
+            self.set_constraint("minimum", min_value)
             self.add_validator(lambda v: v >= min_value, f"value must be >= {min_value}")
         if max_value is not None:
+            self.set_constraint("maximum", max_value)
             self.add_validator(lambda v: v <= max_value, f"value must be <= {max_value}")
 
     def _validate_type(self, value: Any, path: str) -> list[dict[str, Any]]:
@@ -273,11 +303,13 @@ class List(Field):
         super().__init__(**kwargs)
         self._item_field = item_field
         if min_length is not None:
+            self.set_constraint("minItems", min_length)
             self.add_validator(
                 lambda v: len(v) >= min_length,
                 f"list must have at least {min_length} items",
             )
         if max_length is not None:
+            self.set_constraint("maxItems", max_length)
             self.add_validator(
                 lambda v: len(v) <= max_length,
                 f"list must have at most {max_length} items",
@@ -1062,31 +1094,12 @@ def _schema_to_json_schema(schema) -> dict:
         prop = _field_to_json_schema(field, key=key)
         if field.description:
             prop["description"] = field.description
-        for fn, msg in field._validators:
-            if "must be at least" in msg and "characters" in msg:
-                try:
-                    n = int(msg.split("at least ")[1].split(" ")[0])
-                    prop.setdefault("minLength", n)
-                except (ValueError, IndexError):
-                    pass
-            elif "must be at most" in msg and "characters" in msg:
-                try:
-                    n = int(msg.split("at most ")[1].split(" ")[0])
-                    prop.setdefault("maxLength", n)
-                except (ValueError, IndexError):
-                    pass
-            elif "must be >=" in msg:
-                try:
-                    n = msg.split("must be >= ")[1].split(" ")[0]
-                    prop.setdefault("minimum", float(n) if "." in n else int(n))
-                except (ValueError, IndexError):
-                    pass
-            elif "must be <=" in msg:
-                try:
-                    n = msg.split("must be <= ")[1].split(" ")[0]
-                    prop.setdefault("maximum", float(n) if "." in n else int(n))
-                except (ValueError, IndexError):
-                    pass
+        # Constraints come from the field constructors (v0.6.0). The
+        # previous implementation reverse-engineered them by parsing
+        # human-readable validator messages, which dropped choices and
+        # pattern entirely and could invent a minLength from prose.
+        for cname, cvalue in field.constraints.items():
+            prop.setdefault(cname, cvalue)
         if field.default is not Ellipsis:
             prop["default"] = field.default
         properties[key] = prop
