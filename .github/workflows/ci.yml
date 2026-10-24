@@ -18,6 +18,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: pip install pytest
       - name: Run tests
-        run: python test_tiny_validator.py -v
+        run: python -m pytest test_tiny_validator.py test_v040_export.py test_v050_mcp.py test_v060_export.py -v
 
