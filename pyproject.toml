@@ -23,3 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+
+
+[tool.setuptools]
+# Without an explicit py-modules list, setuptools flat-layout auto-discovery
+# produces an EMPTY wheel: `pip install tiny-validator` installs no importable module.
+py-modules = ["tiny_validator", "tiny_validator_mcp"]
