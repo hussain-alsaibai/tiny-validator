@@ -1,4 +1,5 @@
 # tiny-validator — Zero-Dependency Input Validation
+[![CI](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml)
 
 > **Like Pydantic, but in one file. Zero dependencies.**
 
