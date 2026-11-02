@@ -3,7 +3,8 @@
 
 > **Like Pydantic, but in one file. Zero dependencies.**
 
-[![version 0.5.0](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/hussain-alsaibai/tiny-validator)
+[![version 0.6.0](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/hussain-alsaibai/tiny-validator)
+[![CI](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](tiny_validator.py)
@@ -25,6 +26,19 @@
 - **🧬 JSON Schema import** — `json_schema()` / `from_json_schema()` for MCP tool contracts
 - **📦 Batch validation** — `schema.validate_many(items)` splits valid/invalid
 - **🩹 Partial validation** — `schema.partial()` ignores unknown fields
+
+## 📦 Installation
+
+```bash
+# From GitHub (recommended -- not yet on PyPI)
+pip install git+https://github.com/hussain-alsaibai/tiny-validator.git
+```
+
+Or just copy `tiny_validator.py` into your project — it is a single file with
+zero dependencies.
+
+<!-- NOTE: the name `tiny-validator` is currently unclaimed on PyPI. This
+project is not published there yet, so use the GitHub URL above. -->
 
 ## 🚀 Quick Start
 
