@@ -150,6 +150,44 @@ def search_handler(body, query):
     return {"q": body["query"], "limit": body["limit"]}
 ```
 
+## 🔗 Cross-field rules
+
+Schema validation answers "is each field individually well-formed?". This
+module answers the question a schema cannot: "are these fields consistent
+with each other?"
+
+```python
+from rules import Rule, check_rules, apply_computed
+
+data = {"start": 9, "end": 5}
+
+errors = check_rules(data, [
+    Rule(lambda d: d["start"] <= d["end"], "start must be <= end"),
+])
+# -> [{"path": "", "message": "start must be <= end"}]
+
+```
+
+A rule returns `False` to fail, or raises `CrossFieldError` / `AssertionError`
+to fail with a specific message. The error dicts have the same shape as the
+ones a `Schema` returns, so they can be merged into one response.
+
+Computed fields derive a value from the validated data:
+
+```python
+result = apply_computed(
+    {"first": "Ada", "last": "Lovelace"},
+    {"full_name": lambda d: d["first"] + " " + d["last"]},
+)
+# -> {"first": "Ada", "last": "Lovelace", "full_name": "Ada Lovelace"}
+
+```
+
+Computed fields resolve in insertion order, so a later one can read an
+earlier one.
+
+Stdlib only - zero dependencies.
+
 ## 🧱 Field Reference
 
 | Field | Common kwargs |
