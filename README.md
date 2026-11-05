@@ -3,7 +3,7 @@
 
 > **Like Pydantic, but in one file. Zero dependencies.**
 
-[![version 0.6.0](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/hussain-alsaibai/tiny-validator)
+[![version 0.7.0](https://img.shields.io/badge/version-0.7.0-blue)](https://github.com/hussain-alsaibai/tiny-validator)
 [![CI](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -185,6 +185,38 @@ result = apply_computed(
 
 Computed fields resolve in insertion order, so a later one can read an
 earlier one.
+
+Rules and computed fields are not part of `Schema` itself: `Schema.validate()`
+can only see one field at a time, so it cannot express "`end` must be after
+`start`". Run both and concatenate the error lists -- they already share the
+`{"path", "message"}` shape:
+
+```python
+from tiny_validator import Schema, fields
+from rules import Rule, check_rules
+
+booking = Schema({"start": fields.Integer(), "end": fields.Integer()})
+
+def validate_booking(data):
+    errors = booking.validate(data)          # per-field shape
+    if not errors:                           # only then cross-field
+        errors += check_rules(data, [
+            Rule(lambda d: d["start"] <= d["end"], "start must be <= end",
+                 path="end"),
+        ])
+    return errors
+
+validate_booking({"start": 9, "end": 5})
+# -> [{"path": "end", "message": "start must be <= end"}]
+validate_booking({"start": "nine", "end": 5})
+# -> [{"path": "start", "message": "expected integer"}]
+```
+
+Note that the cross-field rules are skipped when a per-field error already
+exists -- a rule like `d["start"] <= d["end"]` raises `TypeError` on `"nine"`,
+and `Rule.evaluate` only converts `CrossFieldError` and `AssertionError`, so
+an unchecked rule over malformed data surfaces as an exception rather than a
+validation error.
 
 Stdlib only - zero dependencies.
 

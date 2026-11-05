@@ -2,6 +2,15 @@
 
 All notable changes to tiny-validator are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-11-05
+
+### Added
+- **`rules.py` - cross-field validation rules and computed fields.** `Schema` validates one field at a time and therefore cannot express "`end` must be after `start`". `Rule(check, message, path=...)` runs a callable over the *validated* mapping and returns a failure when it returns `False` or raises `CrossFieldError` / `AssertionError`; `check_rules(data, rules)` returns failures in the same `{"path", "message"}` shape a `Schema` returns, so the two error lists concatenate. `apply_computed(data, {...})` derives fields in insertion order, so a later computed field can read an earlier one. 23 tests in `test_rules.py`; combined suite 137/137. Stdlib only.
+- **README: the integration that `Schema` cannot express.** The cross-field section now shows `booking.validate()` + `check_rules()` merged into one response, with both outputs executed and asserted - including the per-field-error case, where the cross-field rule is skipped because `Rule.evaluate` only converts `CrossFieldError` and `AssertionError` and a comparison over a malformed value raises `TypeError` instead. Documented rather than papered over: a rule that runs on data which already failed validation will raise.
+
+### Compatibility
+- No changes to `Schema`, `Field` or any existing module. `rules.py` is a new top-level module shipped in the wheel alongside `tiny_validator` and `tiny_validator_mcp`.
+
 ## [0.6.0] - 2026-10-22
 
 ### Fixed

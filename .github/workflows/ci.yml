@@ -21,5 +21,5 @@ jobs:
       - name: Install test dependencies
         run: pip install pytest
       - name: Run tests
-        run: python -m pytest test_tiny_validator.py test_v040_export.py test_v050_mcp.py test_v060_export.py test_rules.py -v
+        run: python -m pytest test_tiny_validator.py test_v040_export.py test_v050_mcp.py test_v060_export.py test_rules.py test_version_consistency.py -v
 
