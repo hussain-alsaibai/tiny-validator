@@ -2,6 +2,40 @@
 
 All notable changes to tiny-validator are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.1] - 2026-11-12
+
+### Fixed
+
+- **`to_json_schema()` exported a schema that rejects valid payloads.** The
+  exporter decided membership of `required` from `field.required` alone, but
+  `validate()` only reports a missing field when `required and default is ...`.
+  A field written as `String(default="anon")` — or `List(String(), default=[])`
+  — is optional at runtime and was still emitted in `required`. The result was
+  a JSON Schema that refused data the library accepts, which is the worst
+  direction for a bug: it breaks every OpenAPI 3.1 document and MCP tool
+  definition generated from the export, and the failure surfaces in the
+  consumer, not here.
+
+  ```python
+  s = Schema({"tags": fields.List(fields.String(), default=[])})
+  s.validate({})        # -> []            (accepted)
+  to_json_schema(s)     # -> required: ["tags"]
+  jsonschema.validate({}, to_json_schema(s))
+  # jsonschema.ValidationError: 'tags' is a required property
+  ```
+
+  A field is now required only when `field.required and field.default is ...`,
+  matching `validate()` exactly.
+
+### Added
+
+- `test_export_agrees_with_validate` — a parametrised cross-check that runs
+  the same payload through the library and through `jsonschema` against the
+  exported schema and asserts they agree. Skipped when `jsonschema` is absent,
+  so the zero-dependency test run is unaffected.
+- 5 further regression tests for the required/optional matrix. Three of the
+  new tests fail against the pre-fix exporter (verified in a scratch clone).
+
 ## [0.7.0] - 2026-11-05
 
 ### Added

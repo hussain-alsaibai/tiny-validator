@@ -132,3 +132,70 @@ def test_default_still_exported_alongside_constraints():
     assert got["default"] == "abc"
     assert got["minLength"] == 1
 
+# ---------- v0.7.1: export must not contradict validation ----------
+
+
+def test_default_field_is_not_declared_required():
+    """A defaulted field is optional; required= must not name it.
+
+    validate() only reports "missing required field" when
+    `required and default is ...`, so a field constructed as
+    List(String(), default=[]) is optional in practice. The exporter read
+    field.required alone and emitted it in `required`, producing a JSON
+    Schema that rejected payloads this library accepts.
+    """
+    got = to_json_schema(Schema({"tags": List(String(), default=[])}))
+    assert "required" not in got or "tags" not in got["required"]
+
+
+def test_required_without_default_still_declared():
+    got = to_json_schema(Schema({"name": String(required=True)}))
+    assert got["required"] == ["name"]
+
+
+def test_explicit_optional_not_declared_required():
+    got = to_json_schema(Schema({"n": String(required=False)}))
+    assert "required" not in got or "n" not in got["required"]
+
+
+@pytest.mark.parametrize(
+    "schema,payload",
+    [
+        (Schema({"tags": List(String(), default=[])}), {}),
+        (Schema({"tags": List(String(), default=[])}), {"tags": ["a"]}),
+        (Schema({"name": String(required=True)}), {"name": "a"}),
+        (Schema({"n": String(required=False)}), {}),
+    ],
+)
+def test_export_agrees_with_validate(schema, payload):
+    """tiny_validator and the exported JSON Schema must agree on accept/reject."""
+    jsonschema = pytest.importorskip("jsonschema")
+    exported = to_json_schema(schema)
+
+    library_ok = not schema.validate(payload)
+    try:
+        jsonschema.validate(payload, exported)
+        jsonschema_ok = True
+    except jsonschema.ValidationError:
+        jsonschema_ok = False
+
+    assert library_ok == jsonschema_ok, (
+        f"disagreement on {payload!r}:\n"
+        f"  tiny_validator accepted={library_ok}\n"
+        f"  exported schema accepted={jsonschema_ok}\n"
+        f"  schema={exported}"
+    )
+
+
+def test_required_and_optional_mixed():
+    got = to_json_schema(
+        Schema(
+            {
+                "name": String(required=True),
+                "nick": String(default="anon"),
+                "age": Integer(required=False),
+            }
+        )
+    )
+    assert got["required"] == ["name"]
+    assert got["properties"]["nick"]["default"] == "anon"

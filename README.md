@@ -3,7 +3,7 @@
 
 > **Like Pydantic, but in one file. Zero dependencies.**
 
-[![version 0.7.0](https://img.shields.io/badge/version-0.7.0-blue)](https://github.com/hussain-alsaibai/tiny-validator)
+[![version 0.7.1](https://img.shields.io/badge/version-0.7.1-blue)](https://github.com/hussain-alsaibai/tiny-validator)
 [![CI](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -291,6 +291,38 @@ args = schema({"repo": "hussain-alsaibai/tiny-validator", "limit": 5})
 The bridge intentionally supports a practical subset and raises `ValueError`
 for unsupported keywords, so tool-call validation fails loudly instead of
 silently accepting a partial contract.
+
+### Export: the schema agrees with `validate()`
+
+`to_json_schema()` is the reverse direction — turn a `Schema` into JSON Schema
+for an OpenAPI 3.1 document or an MCP tool definition. Like `from_json_schema`,
+it covers a practical subset, and it is **lossy by design**: lambda validators
+cannot be re-derived, so the export is documentation and interop, not a
+replacement for the original `Schema`.
+
+What it does guarantee is agreement on required-ness. A field is emitted in
+`required` only when the library also treats a missing value as an error:
+
+```python
+from tiny_validator import Schema, fields, to_json_schema
+
+s = Schema({
+    "name": fields.String(required=True),
+    "tags": fields.List(fields.String(), default=[]),   # optional
+})
+
+to_json_schema(s)["required"] == ["name"]   # "tags" is omitted, not required
+# the only error is the missing "name"; "tags" is not required
+s.validate({})   # -> [{"path": "name", "message": "missing required field"}]
+```
+
+v0.7.1 fixed this: the exporter previously read `field.required` alone, so a
+defaulted field landed in `required` and the exported schema rejected payloads
+the library accepts. Every consumer built from that export — an MCP tool
+definition, an OpenAPI request body — refused valid input, and the failure
+surfaced in the consumer rather than here. `test_export_agrees_with_validate`
+runs the same payload through `validate()` and through `jsonschema` against
+the export, and asserts they agree.
 
 See also:
 

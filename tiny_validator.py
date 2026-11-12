@@ -29,7 +29,7 @@ from decimal import InvalidOperation
 from typing import Any, Callable, Iterable, Mapping
 
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 
 # ---------- Errors ----------
@@ -1103,7 +1103,12 @@ def _schema_to_json_schema(schema) -> dict:
         if field.default is not Ellipsis:
             prop["default"] = field.default
         properties[key] = prop
-        if field.required:
+        # A field with a default is optional by definition: validate() only
+        # reports "missing required field" when `required and default is ...`.
+        # Emitting such a field in `required` produced a JSON Schema that
+        # rejects payloads this library accepts, so any OpenAPI/MCP consumer
+        # built from the export refused valid input.
+        if field.required and field.default is Ellipsis:
             required.append(key)
     out: dict = {"type": "object", "properties": properties}
     if required:
