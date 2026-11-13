@@ -29,7 +29,7 @@ from decimal import InvalidOperation
 from typing import Any, Callable, Iterable, Mapping
 
 
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 
 
 # ---------- Errors ----------
@@ -531,6 +531,14 @@ class IP(String):
     def __init__(self, *, version: int | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.version = version
+        # v0.7.2: the format tag is what makes an exported schema useful.
+        # `format: ipv4` / `format: ipv6` are the de-facto OpenAPI tags; no
+        # standard tag covers both families, so an unversioned IP exports
+        # without one rather than claiming something nothing validates.
+        if version == 4:
+            self.set_constraint("format", "ipv4")
+        elif version == 6:
+            self.set_constraint("format", "ipv6")
 
         def _check(v: str) -> bool:
             try:
@@ -555,6 +563,10 @@ class Slug(String):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        # v0.7.2: recorded so the constraint survives export. Without it a
+        # slug exported as a bare {"type": "string"} and every generated
+        # client accepted "Not A Slug".
+        self.set_constraint("pattern", self.SLUG_RE.pattern)
         self.add_validator(
             lambda v: bool(self.SLUG_RE.match(v)),
             "value must be a valid slug (lowercase alphanumeric, hyphens)",
@@ -567,6 +579,7 @@ class Regex(String):
     def __init__(self, pattern: str, *, flags: int = 0, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._compiled = re.compile(pattern, flags)
+        self.set_constraint("pattern", pattern)
         self.add_validator(
             lambda v: bool(self._compiled.match(v)),
             f"value must match pattern {pattern!r}",
@@ -583,6 +596,7 @@ class HexColor(String):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self.set_constraint("pattern", self.COLOR_RE.pattern)
         self.add_validator(
             lambda v: bool(self.COLOR_RE.match(v)),
             "value must be a hex color (#RGB, #RRGGBB, or #RRGGBBAA)",
@@ -936,6 +950,13 @@ def _json_string_field(sub_schema: Mapping[str, Any]) -> String:
         return Date(**kwargs)
     if fmt == "date-time":
         return DateTime(**kwargs)
+    # v0.7.2: format is not only a display hint. A schema that says
+    # `format: ipv4` was imported as a bare String, so the round-tripped
+    # validator accepted "999.1.1.1" that the exported schema rejects.
+    if fmt == "ipv4":
+        return IP(version=4, **kwargs)
+    if fmt == "ipv6":
+        return IP(version=6, **kwargs)
     return String(**kwargs)
 
 

@@ -2,6 +2,30 @@
 
 All notable changes to tiny-validator are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.2] - 2026-11-13
+
+### Fixed
+- **`Slug`, `Regex` and `HexColor` exported as a bare `{"type": "string"}`.**
+  v0.6.0 moved constraint recovery from message-parsing to construction-time
+  recording, and v0.7.1 fixed `required` the same way, but these three field
+  types build their regex inline without calling `set_constraint`. The exported
+  document therefore permitted `"Not A Slug"`, which the Schema itself rejects.
+  All three now record `pattern`.
+- **`IP` exported no `format` at all.** `IP(version=4)` and `IP(version=6)` now
+  export `format: ipv4` / `format: ipv6`. An unversioned `IP()` exports a plain
+  string *without* a format tag on purpose: no standard JSON Schema format
+  covers both families, and a tag no consumer validates is worse than none.
+- **`from_json_schema()` ignored `format: ipv4` / `ipv6`.** The importer built a
+  plain `String`, so a document exported from `IP(version=4)` round-tripped into
+  a validator that accepted `999.1.1.1` and `::1`. Both formats now import as
+  the matching `IP`.
+
+### Added
+- `test_v070_export_roundtrip.py` — 14 tests, each an export/import/reject
+  cycle over the public API. Ten fail against v0.7.1; the other four guard
+  `enum`, bounds, `additionalProperties` and nested `items` so the
+  v0.6.0/v0.7.1 behaviour cannot regress in the same area.
+
 ## [0.7.1] - 2026-11-12
 
 ### Fixed

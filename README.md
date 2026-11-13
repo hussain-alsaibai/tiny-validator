@@ -3,7 +3,7 @@
 
 > **Like Pydantic, but in one file. Zero dependencies.**
 
-[![version 0.7.1](https://img.shields.io/badge/version-0.7.1-blue)](https://github.com/hussain-alsaibai/tiny-validator)
+[![version 0.7.2](https://img.shields.io/badge/version-0.7.2-blue)](https://github.com/hussain-alsaibai/tiny-validator)
 [![CI](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -105,6 +105,56 @@ errors = validator.validate({"name": "Alice", "email": "alice@example.com"})
 schema = from_json_schema('{"type": "object", "properties": {"x": {"type": "integer"}}}')
 ```
 
+### 🧾 Export a Schema back to JSON Schema
+
+`to_json_schema()` is the inverse direction — useful for publishing an
+OpenAPI 3.1 document or an MCP tool definition from the Schema that actually
+enforces the rules.
+
+```python
+import tiny_validator as tv
+from tiny_validator import Schema, fields
+
+schema = Schema({
+    "slug":  fields.Slug(),
+    "ip":    fields.IP(version=4),
+    "color": fields.HexColor(),
+}, strict=True)
+
+print(tv.to_json_schema(schema))
+```
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "slug":  {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "ip":    {"type": "string", "format": "ipv4"},
+    "color": {"type": "string", "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"}
+  },
+  "required": ["slug", "ip", "color"],
+  "additionalProperties": false
+}
+```
+
+The round trip is strict in both directions, which is the property worth
+checking if you generate clients from the export:
+
+```python
+imported = tv.from_json_schema(tv.to_json_schema(schema))
+imported({"slug": "ok", "ip": "10.0.0.1", "color": "#fff"})   # accepted
+
+try:
+    imported({"slug": "Not A Slug", "ip": "::1", "color": "red"})
+except tv.ValidationError as exc:
+    print([e["path"] for e in exc.errors])   # ['slug', 'ip', 'color']
+```
+
+Custom lambda validators (`add_validator(...)`) cannot be expressed in JSON
+Schema and are **not** exported. If a constraint matters to a downstream
+consumer, express it through a field kwarg (`min_length`, `pattern`,
+`choices`, `min_value`) rather than a lambda.
+
 ## 📦 Batch validation
 
 Validate a list of items and split into valid/invalid buckets:
@@ -149,76 +199,6 @@ errors = partial.validate({"name": "Alice", "extra": "ignored"})
 def search_handler(body, query):
     return {"q": body["query"], "limit": body["limit"]}
 ```
-
-## 🔗 Cross-field rules
-
-Schema validation answers "is each field individually well-formed?". This
-module answers the question a schema cannot: "are these fields consistent
-with each other?"
-
-```python
-from rules import Rule, check_rules, apply_computed
-
-data = {"start": 9, "end": 5}
-
-errors = check_rules(data, [
-    Rule(lambda d: d["start"] <= d["end"], "start must be <= end"),
-])
-# -> [{"path": "", "message": "start must be <= end"}]
-
-```
-
-A rule returns `False` to fail, or raises `CrossFieldError` / `AssertionError`
-to fail with a specific message. The error dicts have the same shape as the
-ones a `Schema` returns, so they can be merged into one response.
-
-Computed fields derive a value from the validated data:
-
-```python
-result = apply_computed(
-    {"first": "Ada", "last": "Lovelace"},
-    {"full_name": lambda d: d["first"] + " " + d["last"]},
-)
-# -> {"first": "Ada", "last": "Lovelace", "full_name": "Ada Lovelace"}
-
-```
-
-Computed fields resolve in insertion order, so a later one can read an
-earlier one.
-
-Rules and computed fields are not part of `Schema` itself: `Schema.validate()`
-can only see one field at a time, so it cannot express "`end` must be after
-`start`". Run both and concatenate the error lists -- they already share the
-`{"path", "message"}` shape:
-
-```python
-from tiny_validator import Schema, fields
-from rules import Rule, check_rules
-
-booking = Schema({"start": fields.Integer(), "end": fields.Integer()})
-
-def validate_booking(data):
-    errors = booking.validate(data)          # per-field shape
-    if not errors:                           # only then cross-field
-        errors += check_rules(data, [
-            Rule(lambda d: d["start"] <= d["end"], "start must be <= end",
-                 path="end"),
-        ])
-    return errors
-
-validate_booking({"start": 9, "end": 5})
-# -> [{"path": "end", "message": "start must be <= end"}]
-validate_booking({"start": "nine", "end": 5})
-# -> [{"path": "start", "message": "expected integer"}]
-```
-
-Note that the cross-field rules are skipped when a per-field error already
-exists -- a rule like `d["start"] <= d["end"]` raises `TypeError` on `"nine"`,
-and `Rule.evaluate` only converts `CrossFieldError` and `AssertionError`, so
-an unchecked rule over malformed data surfaces as an exception rather than a
-validation error.
-
-Stdlib only - zero dependencies.
 
 ## 🧱 Field Reference
 
@@ -292,38 +272,6 @@ The bridge intentionally supports a practical subset and raises `ValueError`
 for unsupported keywords, so tool-call validation fails loudly instead of
 silently accepting a partial contract.
 
-### Export: the schema agrees with `validate()`
-
-`to_json_schema()` is the reverse direction — turn a `Schema` into JSON Schema
-for an OpenAPI 3.1 document or an MCP tool definition. Like `from_json_schema`,
-it covers a practical subset, and it is **lossy by design**: lambda validators
-cannot be re-derived, so the export is documentation and interop, not a
-replacement for the original `Schema`.
-
-What it does guarantee is agreement on required-ness. A field is emitted in
-`required` only when the library also treats a missing value as an error:
-
-```python
-from tiny_validator import Schema, fields, to_json_schema
-
-s = Schema({
-    "name": fields.String(required=True),
-    "tags": fields.List(fields.String(), default=[]),   # optional
-})
-
-to_json_schema(s)["required"] == ["name"]   # "tags" is omitted, not required
-# the only error is the missing "name"; "tags" is not required
-s.validate({})   # -> [{"path": "name", "message": "missing required field"}]
-```
-
-v0.7.1 fixed this: the exporter previously read `field.required` alone, so a
-defaulted field landed in `required` and the exported schema rejected payloads
-the library accepts. Every consumer built from that export — an MCP tool
-definition, an OpenAPI request body — refused valid input, and the failure
-surfaced in the consumer rather than here. `test_export_agrees_with_validate`
-runs the same payload through `validate()` and through `jsonschema` against
-the export, and asserts they agree.
-
 See also:
 
 - [Tool-Call Contracts With tiny-validator](reports/2026-07-09-tool-call-contracts.md) — validating agent tool arguments before filesystem, browser, GitHub, or cloud side effects.
@@ -331,7 +279,6 @@ See also:
 - [JSON Schema Tool Contracts With tiny-validator](reports/2026-07-13-json-schema-tool-contracts.md) — validating MCP-style tool arguments with a zero-dependency schema bridge.
 - [Schema Drift Repair Loops With tiny-validator](reports/2026-07-14-schema-drift-repair-loops.md) — turning validation failures into safe, inspectable repair prompts for agent outputs and tool payloads.
 - [Agent Capability Contracts With tiny-validator](reports/2026-07-17-agent-capability-contracts.md) — strict schemas for MCP tools, GitHub actions, cron jobs, and other side-effecting capabilities.
-- [Tool-Call Contract Regression With tiny-validator](reports/2026-11-06-tool-call-contract-regression.md) — validating at the boundary rather than before serialisation, plus the four contract checks worth putting in CI.
 
 ## 📊 Comparison
 
