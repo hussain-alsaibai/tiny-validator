@@ -2,6 +2,25 @@
 
 All notable changes to tiny-validator are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed (docs)
+- **`llms.txt` described a four-version-old library.** It advertised
+  `Version: 0.3.0` against a package at 0.7.2, omitted `Schema`,
+  `AsyncValidator`, `AsyncField`, `to_json_schema`, `to_openapi_schema`,
+  `from_json_schema` and `http_error_response`, and listed nine of the
+  eighteen field types. A reader was told the library had five field types
+  and no export path — the two features that justify choosing it.
+- The Python floor claim and the public API list are now covered by
+  `test_llms_drift.py` (60 tests), which fails 22 times against the previous
+  file. It also checks the reverse direction: every documented name must
+  actually be exported.
+
+### Changed
+- CI lists every test file explicitly; `test_v070_export_roundtrip.py` was
+  never added to it, so the 14 round-trip tests that justify 0.7.2 had never
+  run in CI. Both it and the new drift test are now named.
+
 ## [0.7.2] - 2026-11-13
 
 ### Fixed

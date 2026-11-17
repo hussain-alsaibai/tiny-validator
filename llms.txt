@@ -1,8 +1,8 @@
 # tiny-validator
 
-> Zero-dependency validator for Python. JSV-style + new schema + JSON Schema import. One call. Built for humans and AI agents.
+> Zero-dependency schema validator for Python. Typed fields, JSON Schema import/export, OpenAPI 3.1 and MCP tool-schema output. Built for humans and AI agents.
 
-- Version: 0.3.0
+- Version: 0.7.2
 - License: MIT
 - Repository: https://github.com/hussain-alsaibai/tiny-validator
 - Language: Python (3.8+)
@@ -12,35 +12,65 @@
 
 ## What this library does
 
-Provides field-level validation against a schema — required, type, range, length,
-format, regex — and full JSON Schema import (draft-07 subset). Validates nested
-structures, batch-validates lists, and supports partial schemas (validate subset
-of fields and ignore the rest).
+Declarative validation with two interchangeable front-ends:
+
+1. **Dict schemas** — `validate(value, schema)` against a plain nested dict.
+2. **Typed `Schema` objects** — `Schema({"email": fields.Email()})`, implemented
+   by real field classes (`String`, `Integer`, `Email`, `Url`, `Uuid`, `Date`,
+   `DateTime`, `Decimal_`, `List`, `Dict_`, `Json`, `IP`, `Slug`, `Regex`,
+   `HexColor`, `Any`, `Boolean`, `Float`).
+
+Either form can be **exported** to JSON Schema 2020-12, embedded in an OpenAPI
+3.1 document, or used as an MCP tool definition — and the exported document is
+guaranteed to reject exactly what the validator rejects.
 
 ## When to use it
 
 - You need validation smaller than `jsonschema` (~150KB with `rpds-py`).
-- You want zero transitive dependencies.
-- You need field-level detailed error messages.
-- You want to validate agent tool-call arguments against a JSON Schema.
-- You need to import existing JSON Schema files unchanged.
+- You want a schema that can be **written once** and emitted as a tool definition.
+- You need zero transitive dependencies.
+- You need OpenAPI 3.1 `components.schemas` fragments without pulling in a full spec validator.
+- You need async validation for fields that check a database or an API.
 
 ## When NOT to use it
 
-- You need full JSON Schema 2020-12 (subset only).
-- You need to validate against OpenAPI Schema Objects (use `openapi-spec-validator`).
-- You need async validation pipelines (sync only).
+- You need full JSON Schema 2020-12 *input* (the importer covers a draft-07 subset).
+- You need to validate OpenAPI Schema Objects as input (use `openapi-spec-validator`).
+- You need streaming / incremental validation of a byte stream.
 
 ## Public API
 
-- `tiny_validator.validate(value, schema) -> (ok: bool, errors: list)`
-- `tiny_validator.field(name, **rules)` — field with rules builder
-- `tiny_validator.Json`, `tiny_validator.IP`, `tiny_validator.Slug`, `tiny_validator.Regex`, `tiny_validator.HexColor` — built-in field types
-- `tiny_validator.batch(values, schema)` — list validate
-- `tiny_validator.partial(schema)` — validate subset of fields
-- `tiny_validator.from_json_schema(d)` — import draft-07
+### Validation
 
-## Schema syntax
+- `validate(value, schema, *, strict=False) -> (ok: bool, errors: list)`
+- `Schema(definition, *, strict=False)` — object with `.validate(data)` and `.to_json_schema()`
+- `PartialSchema(...)` — validate a subset, ignore unknown keys
+- `json_schema(schema_dict)` — convert a dict schema into a `Schema` object
+- `ValidationError` / `InvalidOperation`
+
+### Typed fields (`fields` namespace, or import directly)
+
+`fields.String`, `Integer`, `Float`, `Boolean`, `Any`, `List`, `Dict_`,
+`Email`, `Url`, `Uuid`, `Date`, `DateTime`, `Decimal_`, `Json`, `IP`, `Slug`,
+`Regex`, `HexColor`
+
+`IP(version=4)` / `IP(version=6)` import and export as `format: ipv4` / `ipv6`.
+An unversioned `IP()` exports **no** `format`: no standard tag covers both
+families, and a tag nothing validates reads as a guarantee.
+
+### Export / interop
+
+- `to_json_schema(schema) -> dict` — draft 2020-12 document
+- `to_openapi_schema(schema, *, title="Model", description="", required_override=None) -> dict`
+- `from_json_schema(doc) -> Schema` — import a draft-07 subset
+- `http_error_response(exc) -> dict` — RFC 9457-shaped problem body
+
+### Async
+
+- `AsyncValidator(definition, *, strict=False)` with `await v.validate(data)`
+- `AsyncField(fn)` — `fn(value)` returns `None` when valid, an error string otherwise
+
+## Schema syntax (dict form)
 
 ```python
 schema = {
@@ -53,33 +83,83 @@ schema = {
         "zip": {"type": "string", "regex": r"^\d{5}$"},
     }},
 }
-ok, errors = tv.validate({"name": "Alice", "email": "a@b.c", "age": 30, "role": "admin"}, schema)
+ok, errors = tv.validate({"name": "Alice", "email": "a@b.c", "age": 30}, schema)
 ```
+
+## Schema syntax (typed form, exportable)
+
+```python
+from tiny_validator import Schema, fields, to_openapi_schema
+
+order = Schema({
+    "id":      fields.Uuid(),
+    "email":   fields.Email(),
+    "amount":  fields.Decimal_(),
+    "tags":    fields.List(fields.String(), default=[]),   # optional: has a default
+    "ship_to": fields.Dict_({"zip": fields.Regex(r"^\d{5}$")}),
+})
+
+order.validate({"id": "...", "email": "a@b.c", "amount": "10.00"})
+
+to_openapi_schema(order, title="Order")
+# -> {"$schema": "https://json-schema.org/draft/2020-12/schema",
+#     "title": "Order", "type": "object",
+#     "properties": {...}, "required": ["id", "email", "amount"]}
+```
+
+**`required` is derived the same way `validate()` decides it**: a field is
+required only when `field.required and field.default is ...`. A field with a
+default is omitted from `required`, because the validator accepts its absence.
+v0.7.1 introduced that rule; v0.7.2 extended the same construction-time
+recording to `Slug`, `Regex` and `HexColor` patterns and to `IP` formats.
 
 ## Integration with the tiny-* ecosystem
 
-- After `tiny-config` loads, `tiny-validator` validates the result.
-- `tiny-mcp-server` validates inbound tool-call arguments against tool schemas.
-- `tiny-router` validates request body against route-level schema.
+- `tiny-config` loads config; `tiny-validator` validates the result.
+- `tiny-mcp-server` turns a `Schema` into a tool's `inputSchema` via `to_json_schema`.
+- `tiny-router` validates a request body before the handler runs; `http_error_response` shapes the error.
+- `tiny-cli` returns dicts from commands; those dicts are what you validate.
+
+## Round-trip guarantee
+
+The export path and the validator implement the same rules, and the test suite
+enforces it by **export → import → reject** (not export-only):
+
+```python
+original = Schema({"slug": fields.Slug()})
+assert original.validate({"slug": "Not A Slug"})[0] is False   # genuinely invalid
+rt = from_json_schema(to_json_schema(original))
+assert rt.validate({"slug": "Not A Slug"})[0] is False         # conversion kept it
+```
+
+If you write your own exporter, copy that test shape. Asserting on the exported
+dict alone passes while the importer throws the constraint away.
 
 ## Compatibility
 
-- Python 3.8 – 3.13 confirmed.
-- No C extensions.
-- Pure Python implementation, ~600 LOC.
+- Python 3.8 – 3.13 confirmed (CI matrix on ubuntu-24.04).
+- No C extensions. Pure Python.
+- Zero runtime dependencies; `jsonschema` is an optional test-only cross-check.
 
 ## Common pitfalls
 
 1. `required: True` is enforced per-field; missing fields are reported in `errors`.
 2. `type` accepts: `string`, `int`, `float`, `bool`, `list`, `dict`, `null`.
 3. `regex` is anchored implicitly — escape `^` and `$` only if needed.
-4. JSON Schema import supports `required`, `properties`, `type`, `enum`, `format`,
-   `pattern`, `minimum`, `maximum`, `minLength`, `maxLength` — full $ref resolution
-   requires `tv.enable_refs()`.
+4. A field with a `default` is **optional** and is not emitted in `required`.
+5. `from_json_schema` handles a draft-07 subset: `required`, `properties`, `type`,
+   `enum`, `format` (incl. `ipv4`/`ipv6`), `pattern`, `minimum`, `maximum`,
+   `minLength`, `maxLength`, `additionalProperties`, nested `items`.
+6. `strict=True` reports unknown keys as `unexpected field` errors.
 
 ## Changelog
 
-- 0.3.0 — Json, IP, Slug, Regex, HexColor field types
+- 0.7.2 — `Slug`/`Regex`/`HexColor` export `pattern`; `IP` exports `format`; `from_json_schema` imports `ipv4`/`ipv6`
+- 0.7.1 — `required` matches `validate()` for fields with defaults
+- 0.7.0 — `to_openapi_schema`, `http_error_response`, async validation (`AsyncValidator`, `AsyncField`)
+- 0.6.0 — `to_json_schema` with construction-time constraint recording
+- 0.5.0 — MCP tool-schema support
+- 0.4.0 — JSON Schema export
+- 0.3.0 — typed fields: `Json`, `IP`, `Slug`, `Regex`, `HexColor`, `Email`, `Url`, `Uuid`, `Date`
 - 0.2.0 — JSON Schema import, batch validation, partial schemas
 - 0.1.0 — initial release
-

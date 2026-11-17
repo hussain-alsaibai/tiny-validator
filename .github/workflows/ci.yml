@@ -23,5 +23,21 @@ jobs:
       - name: Install test dependencies
         run: pip install pytest
       - name: Run tests
-        run: python -m pytest test_tiny_validator.py test_v040_export.py test_v050_mcp.py test_v060_export.py test_rules.py test_version_consistency.py -v
+        # Every test file must be named here. A file that is collected by
+        # nobody runs by nobody: test_v070_export_roundtrip.py was written
+        # for v0.7.2 and this line was not updated, so the 14 round-trip
+        # tests that justify the release never ran in CI. `--ignore` is not
+        # used on purpose - a new file that is not listed here should be a
+        # deliberate omission, not an accident.
+        run: >
+          python -m pytest
+          test_tiny_validator.py
+          test_v040_export.py
+          test_v050_mcp.py
+          test_v060_export.py
+          test_v070_export_roundtrip.py
+          test_llms_drift.py
+          test_rules.py
+          test_version_consistency.py
+          -v
 
