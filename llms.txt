@@ -2,12 +2,15 @@
 
 > Zero-dependency schema validator for Python. Typed fields, JSON Schema import/export, OpenAPI 3.1 and MCP tool-schema output. Built for humans and AI agents.
 
-- Version: 0.7.2
+- Version: 0.7.3
 - License: MIT
 - Repository: https://github.com/hussain-alsaibai/tiny-validator
 - Language: Python (3.8+)
 - Runtime dependencies: 0
-- Install: `pip install tiny-validator` (or copy `tiny_validator.py`)
+- Install: `pip install git+https://github.com/hussain-alsaibai/tiny-validator.git`
+  (or copy `tiny_validator.py`). This project is **unpublished** on PyPI: the
+  name `tiny-validator` is not on the index at all, so a bare
+  `pip install tiny-validator` would fail with "no matching distribution".
 - Docs: README.md, `pyproject.toml`, `benchmark.py`
 
 ## What this library does

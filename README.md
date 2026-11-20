@@ -3,7 +3,7 @@
 
 > **Like Pydantic, but in one file. Zero dependencies.**
 
-[![version 0.7.2](https://img.shields.io/badge/version-0.7.2-blue)](https://github.com/hussain-alsaibai/tiny-validator)
+[![version 0.7.3](https://img.shields.io/badge/version-0.7.3-blue)](https://github.com/hussain-alsaibai/tiny-validator)
 [![CI](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-validator/actions/workflows/ci.yml)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
